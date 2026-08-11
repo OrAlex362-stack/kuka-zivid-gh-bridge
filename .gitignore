@@ -1,0 +1,39 @@
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Runtime
+logs/
+*.log
+
+# Local configuration
+config.yaml
+
+# Runtime calibration
+data/calibration/
+
+# Runtime captures
+data/captures/
+
+# Large Zivid files
+*.zdf
+*.zfc
+
+# Temporary
+*.tmp
+*.bak
+*.temp
+
+# OS
+Thumbs.db
+.DS_Store

@@ -1,0 +1,49 @@
+sample_notice: Sanitized tracked sample; full PLY and original NPZ are intentionally omitted.
+capture_id: capture_0001
+timestamp: 2026-08-11T08:20:33.147027+00:00
+valid: true
+camera_mode: mock
+settings_file: settings/capture_settings.yml
+robot_pose_before:
+  seq: 29857
+  matrix_valid: true
+  T_base_flange:
+    - [1.0, 0.0, 0.0, 1000.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 800.0]
+    - [0.0, 0.0, 0.0, 1.0]
+robot_pose_after:
+  seq: 29859
+  matrix_valid: true
+  T_base_flange:
+    - [1.0, 0.0, 0.0, 1000.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 800.0]
+    - [0.0, 0.0, 0.0, 1.0]
+movement:
+  valid: true
+  moved: false
+  translation_motion_mm: 0.0
+  rotation_motion_deg: 0.0
+T_base_flange:
+  - [1.0, 0.0, 0.0, 1000.0]
+  - [0.0, 1.0, 0.0, 0.0]
+  - [0.0, 0.0, 1.0, 800.0]
+  - [0.0, 0.0, 0.0, 1.0]
+T_flange_camera:
+  - [1.0, 0.0, 0.0, 0.0]
+  - [0.0, 1.0, 0.0, 0.0]
+  - [0.0, 0.0, 1.0, 0.0]
+  - [0.0, 0.0, 0.0, 1.0]
+T_base_camera:
+  - [1.0, 0.0, 0.0, 1000.0]
+  - [0.0, 1.0, 0.0, 0.0]
+  - [0.0, 0.0, 1.0, 800.0]
+  - [0.0, 0.0, 0.0, 1.0]
+files:
+  preview_xyz: sample_data/mock_capture_0001/preview_cloud.xyz
+  transformed_ply: null
+  original_camera_file: null
+source_point_count: 36000
+finite_transformed_point_count: 36000
+preview_point_count: 10000

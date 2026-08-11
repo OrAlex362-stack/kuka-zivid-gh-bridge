@@ -1,0 +1,84 @@
+api:
+  host: 127.0.0.1
+  port: 8765
+  log_level: INFO
+  log_max_bytes: 5242880
+  log_backup_count: 5
+
+robot_udp:
+  bind_ip: 127.0.0.1
+  port: 49152
+  parser: auto # auto, json, or delimited
+  history_size: 300
+  socket_timeout_ms: 200
+  shutdown_timeout_ms: 2000
+  max_packet_bytes: 16384
+  connection_timeout_ms: 1000
+  # Initial commissioning defaults only. Measure and tune for the robot/cell.
+  max_pose_age_ms: 250
+  settle_time_ms: 500
+  max_translation_motion_mm: 0.5
+  max_rotation_motion_deg: 0.2
+
+kuka_pose:
+  # Keep null until the controller's A/B/C convention is verified against
+  # known reference poses. Matrix UDP packets bypass this setting.
+  convention: null
+  angle_unit: degrees
+  supported_conventions:
+    - RZ_A_RY_B_RX_C
+    - RX_C_RY_B_RZ_A
+
+zivid:
+  mode: mock # mock, hardware, or file_camera
+  settings_file: settings/capture_settings.yml
+  file_camera_path: null # diagnostics-enabled .zdf or a .zfc
+  reconnect_attempts: 2
+  reconnect_delay_ms: 500
+  mock_seed: 42
+  mock_point_count_per_plane: 12000
+
+calibration:
+  target_sample_count: 20 # UI guidance, not a solve limit
+  min_translation_separation_mm: 20.0
+  min_rotation_separation_deg: 5.0
+  duplicate_policy: reject # reject or warn
+  save_zdf: true
+  # MOCK MODE ONLY. This is synthetic solve behavior, not physical calibration.
+  mock_T_flange_camera:
+    - [1.0, 0.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 100.0]
+    - [0.0, 0.0, 0.0, 1.0]
+
+capture:
+  preview_point_target: 10000
+  ply_binary: true
+
+wcs:
+  crop:
+    enabled: false
+    min_base_mm: [-1000.0, -1000.0, -1000.0]
+    max_base_mm: [2000.0, 2000.0, 2000.0]
+  plane_detection:
+    voxel_size_mm: 3.0
+    distance_threshold_mm: 1.5
+    ransac_n: 3
+    num_iterations: 1500
+    min_inlier_count: 250
+  expected_directions_base:
+    top: [0.0, 0.0, 1.0]
+    side: [0.0, 1.0, 0.0]
+    end: [1.0, 0.0, 0.0]
+  dimensions_axis:
+    width: x
+    height: z
+    length: y
+
+paths:
+  data_root: data
+  calibration_active: data/calibration/active
+  calibration_archive: data/calibration/archive
+  calibration_result: data/calibration/calibration_results.yaml
+  captures: data/captures
+  service_log: logs/service.log
