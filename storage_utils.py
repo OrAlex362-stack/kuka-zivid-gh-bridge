@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -47,6 +47,27 @@ def atomic_write_yaml(path: Path, payload: dict[str, Any]) -> None:
             yaml.safe_dump(yaml_safe(payload), stream, sort_keys=False, allow_unicode=True)
             stream.flush()
             os.fsync(stream.fileno())
+        temporary_path.replace(path)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def atomic_write_via_temp(path: Path, writer: Callable[[Path], None]) -> None:
+    """Write a file through a same-directory temporary path, then rename it.
+
+    The writer receives a real filesystem path and must close any handles it
+    opens before returning. This keeps non-YAML artifacts such as PLY, XYZ, NPZ,
+    and ZDF files from appearing at their final path while still being written.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.stem}.", suffix=path.suffix, dir=path.parent
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        writer(temporary_path)
         temporary_path.replace(path)
     except Exception:
         temporary_path.unlink(missing_ok=True)

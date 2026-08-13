@@ -13,7 +13,7 @@ import numpy as np
 
 from bridge_errors import BridgeError
 from config_loader import configured_path
-from storage_utils import atomic_write_yaml, utc_now_iso
+from storage_utils import atomic_write_yaml, load_yaml, utc_now_iso
 from transform_utils import (
     invert_transform,
     matrix_to_list,
@@ -25,6 +25,19 @@ from transform_utils import (
 LOGGER = logging.getLogger(__name__)
 PLANE_ROLES = ("top", "side", "end")
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+
+
+def _committed_capture(directory: Path) -> bool:
+    manifest = directory / "capture_manifest.yaml"
+    if not manifest.is_file():
+        # Legacy capture directories predate manifests. Explicit IDs remain usable,
+        # but latest selection prefers first-class committed manifests.
+        return False
+    try:
+        return load_yaml(manifest).get("state") == "COMMITTED"
+    except Exception:
+        LOGGER.exception("Unable to read capture manifest: %s", manifest)
+        return False
 
 
 def _unit(vector: Any, *, name: str) -> np.ndarray:
@@ -161,14 +174,22 @@ class WCSPointCloudProcessor:
                 raise BridgeError(
                     "CAPTURE_NOT_FOUND", f"Capture directory not found: {capture_id}.", status_code=404
                 )
+            manifest = directory / "capture_manifest.yaml"
+            if manifest.is_file() and not _committed_capture(directory):
+                raise BridgeError(
+                    "CAPTURE_NOT_COMMITTED",
+                    "The selected capture is not committed and must not be consumed.",
+                    status_code=409,
+                    details={"capture_id": capture_id},
+                )
             return directory
         candidates = [
             child
             for child in self.captures_root.glob("capture_[0-9][0-9][0-9][0-9]*")
-            if child.is_dir()
+            if child.is_dir() and _committed_capture(child)
         ]
         if not candidates:
-            raise BridgeError("CAPTURE_NOT_FOUND", "No production capture is available.", status_code=404)
+            raise BridgeError("CAPTURE_NOT_FOUND", "No committed production capture is available.", status_code=404)
         return max(candidates, key=lambda path: int(path.name.rsplit("_", 1)[1]))
 
     @staticmethod

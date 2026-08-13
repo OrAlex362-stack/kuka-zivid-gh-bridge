@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 
 import numpy as np
@@ -24,9 +25,10 @@ def test_mock_capture_writes_disk_artifacts_without_raw_http_payload(tmp_path) -
 
     robot = RobotUDPServer(config["robot_udp"], config["kuka_pose"])
     now = time.monotonic()
-    packet = json.dumps({"type": "POSE", "seq": 1, "T_base_flange": np.eye(4).tolist()})
-    robot.inject_pose(parse_json_packet(packet, None, received_monotonic=now - 0.6))
-    robot.inject_pose(parse_json_packet(packet, None, received_monotonic=now))
+    packet1 = json.dumps({"type": "POSE", "seq": 1, "T_base_flange": np.eye(4).tolist()})
+    packet2 = json.dumps({"type": "POSE", "seq": 2, "T_base_flange": np.eye(4).tolist()})
+    robot.inject_pose(parse_json_packet(packet1, None, received_monotonic=now - 0.6))
+    robot.inject_pose(parse_json_packet(packet2, None, received_monotonic=now))
 
     calibration_file = tmp_path / "calibration_results.yaml"
     atomic_write_yaml(
@@ -40,7 +42,23 @@ def test_mock_capture_writes_disk_artifacts_without_raw_http_payload(tmp_path) -
     )
     camera = ZividCameraManager(config)
     camera.connect()
-    result = PointCloudCapture(config, robot, camera).capture()
+    stop = threading.Event()
+
+    def feed_pose_history() -> None:
+        seq = 3
+        while not stop.is_set():
+            packet = json.dumps({"type": "POSE", "seq": seq, "T_base_flange": np.eye(4).tolist()})
+            robot.inject_pose(parse_json_packet(packet, None, received_monotonic=time.monotonic()))
+            seq += 1
+            time.sleep(0.001)
+
+    feeder = threading.Thread(target=feed_pose_history)
+    feeder.start()
+    try:
+        result = PointCloudCapture(config, robot, camera).capture()
+    finally:
+        stop.set()
+        feeder.join(timeout=1.0)
     assert result["ok"]
     assert result["capture_id"] == "capture_0001"
     assert result["point_count"] == 300

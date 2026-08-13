@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from storage_utils import atomic_write_via_temp
 from numpy.typing import ArrayLike, NDArray
 
 
@@ -38,27 +40,30 @@ def write_ply(path: Path, xyz: ArrayLike, rgba: ArrayLike | None = None, *, bina
         "property float x\nproperty float y\nproperty float z\n"
         f"{color_header}end_header\n"
     )
-    if binary:
-        with path.open("wb") as stream:
-            stream.write(header.encode("ascii"))
-            if colors is None:
-                points.astype("<f4", copy=False).tofile(stream)
-            else:
-                dtype = np.dtype(
-                    [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("r", "u1"), ("g", "u1"), ("b", "u1")]
-                )
-                records = np.empty(len(points), dtype=dtype)
-                records["x"], records["y"], records["z"] = points.T
-                records["r"], records["g"], records["b"] = colors.T
-                records.tofile(stream)
-    else:
-        with path.open("w", encoding="ascii", newline="\n") as stream:
-            stream.write(header)
-            if colors is None:
-                np.savetxt(stream, points, fmt="%.6f %.6f %.6f")
-            else:
-                combined = np.column_stack([points, colors])
-                np.savetxt(stream, combined, fmt="%.6f %.6f %.6f %d %d %d")
+    def _write(target: Path) -> None:
+        if binary:
+            with target.open("wb") as stream:
+                stream.write(header.encode("ascii"))
+                if colors is None:
+                    points.astype("<f4", copy=False).tofile(stream)
+                else:
+                    dtype = np.dtype(
+                        [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("r", "u1"), ("g", "u1"), ("b", "u1")]
+                    )
+                    records = np.empty(len(points), dtype=dtype)
+                    records["x"], records["y"], records["z"] = points.T
+                    records["r"], records["g"], records["b"] = colors.T
+                    records.tofile(stream)
+        else:
+            with target.open("w", encoding="ascii", newline="\n") as stream:
+                stream.write(header)
+                if colors is None:
+                    np.savetxt(stream, points, fmt="%.6f %.6f %.6f")
+                else:
+                    combined = np.column_stack([points, colors])
+                    np.savetxt(stream, combined, fmt="%.6f %.6f %.6f %d %d %d")
+
+    atomic_write_via_temp(path, _write)
     return len(points)
 
 
@@ -70,6 +75,8 @@ def write_preview_xyz(path: Path, xyz: ArrayLike, target_count: int) -> int:
     if len(points) > target_count:
         indices = np.linspace(0, len(points) - 1, num=target_count, dtype=np.int64)
         points = points[indices]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savetxt(path, points, fmt="%.6f %.6f %.6f")
+    def _write(target: Path) -> None:
+        np.savetxt(target, points, fmt="%.6f %.6f %.6f")
+
+    atomic_write_via_temp(path, _write)
     return len(points)

@@ -15,10 +15,25 @@ from numpy.typing import NDArray
 
 from bridge_errors import BridgeError
 from config_loader import resolve_path
+from storage_utils import atomic_write_via_temp
 from transform_utils import validate_transform
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _metadata_value(obj: Any, *names: str) -> str | None:
+    for name in names:
+        candidate = getattr(obj, name, None)
+        if candidate is None:
+            continue
+        try:
+            value = candidate() if callable(candidate) else candidate
+        except Exception:
+            continue
+        if value not in (None, ""):
+            return str(value)
+    return None
 
 
 @dataclass(slots=True)
@@ -36,15 +51,22 @@ class CapturedFrame:
     source: str
 
     def save_original(self, requested_zdf_path: Path) -> Path:
-        requested_zdf_path.parent.mkdir(parents=True, exist_ok=True)
         if self.native_frame is not None:
-            self.native_frame.save(str(requested_zdf_path))
+            def _write_zdf(target: Path) -> None:
+                self.native_frame.save(str(target))
+
+            atomic_write_via_temp(requested_zdf_path, _write_zdf)
             return requested_zdf_path
+
         mock_path = requested_zdf_path.with_suffix(".mock.npz")
-        if self.rgba is None:
-            np.savez_compressed(mock_path, xyz=self.xyz)
-        else:
-            np.savez_compressed(mock_path, xyz=self.xyz, rgba=self.rgba)
+
+        def _write_mock(target: Path) -> None:
+            if self.rgba is None:
+                np.savez_compressed(target, xyz=self.xyz)
+            else:
+                np.savez_compressed(target, xyz=self.xyz, rgba=self.rgba)
+
+        atomic_write_via_temp(mock_path, _write_mock)
         return mock_path
 
 
@@ -67,6 +89,8 @@ class ZividCameraManager:
         self._connected = False
         self._last_error: str | None = None
         self._capture_count = 0
+        self._camera_serial_number: str | None = None
+        self._camera_model: str | None = None
         self._busy = False
         self._sdk_python_version: str | None = None
         try:
@@ -99,6 +123,8 @@ class ZividCameraManager:
         with self._lock:
             if self.mode == "mock":
                 self._connected = True
+                self._camera_serial_number = "mock-camera"
+                self._camera_model = "synthetic"
                 self._last_error = None
                 LOGGER.info("Zivid camera manager connected in synthetic MOCK mode")
                 return True
@@ -132,6 +158,8 @@ class ZividCameraManager:
                     else configured_settings
                 )
                 self._connected = True
+                self._camera_serial_number = _metadata_value(self._camera, "serial_number", "serialNumber")
+                self._camera_model = _metadata_value(self._camera, "model_name", "model", "info")
                 self._last_error = None
                 LOGGER.info("Connected Zivid camera in %s mode", self.mode)
                 return True
@@ -150,6 +178,8 @@ class ZividCameraManager:
                 except Exception:
                     LOGGER.exception("Error while disconnecting Zivid camera")
             self._camera = None
+            self._camera_serial_number = None if self.mode != "mock" else self._camera_serial_number
+            self._camera_model = None if self.mode != "mock" else self._camera_model
             self._file_camera_source_frame = None
             self._settings = None
             self._connected = False
@@ -300,6 +330,8 @@ class ZividCameraManager:
                 "mode": self.mode,
                 "busy": self._busy,
                 "sdk_python_version": self._sdk_python_version,
+                "serial_number": self._camera_serial_number,
+                "model": self._camera_model,
                 "settings_file": str(self.settings_path),
                 "capture_count": self._capture_count,
                 "last_error": self._last_error,

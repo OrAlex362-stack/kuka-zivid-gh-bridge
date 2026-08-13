@@ -215,3 +215,119 @@ Commission these items in the guarded physical cell. The Python service receives
 ## Detailed Documentation
 
 See docs/KUKA_Zivid_Python_Grasshopper_操作與測試說明.md for the end-to-end operating and verification guide.
+
+
+## UDP Hardening Contract
+
+The UDP stream remains the authoritative actual robot-state source. Motion may be planned or commanded elsewhere (KRL, Jog, Grasshopper, RoboDK, or another planner), but this Python service still does not send robot motion commands.
+
+Preferred JSON pose packet:
+
+~~~json
+{
+  "type": "POSE",
+  "session_id": "kuka-session-001",
+  "seq": 1523,
+  "timestamp": 12345678,
+  "T_base_flange": [[1,0,0,1000],[0,1,0,0],[0,0,1,800],[0,0,0,1]],
+  "matrix_name": "T_base_flange",
+  "source_frame": "flange",
+  "target_frame": "base",
+  "units": "mm",
+  "state": "READY"
+}
+~~~
+
+`session_id` is optional for backward compatibility, but real commissioning should send it. Within one session, `seq` must move forward. Duplicate or older same-session packets are ignored and counted in `/status`. A changed `session_id` is treated as sender restart: old pose history is cleared, sequence tracking restarts, and old samples cannot satisfy stationary checks.
+
+Robot-side `timestamp` is metadata only. Freshness and capture timing use the server's `time.monotonic()` receive/acquisition clock unless a separate time-synchronization scheme is explicitly commissioned.
+
+### Pose semantics
+
+A valid 4x4 matrix proves only that the packet contains a rigid transform. It does not prove that the matrix is physically `T_base_flange`. Packets should include at minimum:
+
+~~~text
+matrix_name: T_base_flange
+source_frame: flange
+target_frame: base
+units: mm
+~~~
+
+The service reports this metadata but does not claim physical validation. Passing software tests does not certify KUKA/RoboDK/Rhino/Zivid transform semantics.
+
+### Networking
+
+Mock/local defaults bind to localhost. For real KUKA commissioning, use a dedicated robot NIC/VLAN, Windows Firewall rules, and set:
+
+~~~yaml
+robot_udp:
+  expected_sender_ip: <KUKA sender IP>
+~~~
+
+Packets from other IPs are rejected and counted. Do not expose HTTP or UDP on `0.0.0.0` unless the cell network/security setup has been reviewed.
+
+## Capture Transaction Model
+
+Each capture directory has a `capture_manifest.yaml` with one of:
+
+~~~text
+STARTED -> CAPTURED -> TRANSFORMED -> COMMITTED
+FAILED
+~~~
+
+Only `COMMITTED` captures are valid for downstream latest-capture selection. On startup, incomplete `STARTED`, `CAPTURED`, or `TRANSFORMED` manifests are marked `FAILED` with recovery metadata. Diagnostic files are preserved.
+
+Capture timing metadata records:
+
+~~~text
+capture_request_monotonic
+camera_capture_start_monotonic
+camera_capture_end_monotonic
+post_capture_validation_monotonic
+~~~
+
+These bound the software acquisition call. They are not claimed to be physical exposure start/end unless the Zivid SDK explicitly exposes such timing. The robot must be stationary before capture, the pose history spanning the acquisition interval must stay within configured translation/rotation thresholds, and an insufficient UDP pose history rejects the capture instead of assuming stationarity.
+
+`POST /capture` remains bodyless-compatible. Grasshopper or other clients may pass a duplicate-protection body:
+
+~~~json
+{"request_id": "gh-capture-123"}
+~~~
+
+Repeating the same `request_id` replays the first successful result instead of creating another capture.
+
+## Calibration Provenance
+
+`calibration_results.yaml` preserves the directional transform format:
+
+~~~yaml
+transform:
+  name: T_flange_camera
+  from: camera
+  to: flange
+  matrix: ...
+~~~
+
+New calibration files also include camera, robot, mount, calibration, source, units, classification, and residual summary metadata where available. Unknown hardware fields remain `null`; fake serials should not be invented. Mock/synthetic calibration is still rejected outside mock camera mode. Non-mock camera loading rejects missing production provenance and obvious camera serial mismatches when both serials are known.
+
+## Real KUKA / Zivid Commissioning Checklist
+
+Software tests are necessary but not sufficient. Passing software unit tests does NOT certify physical transform semantics.
+
+1. Keep `kuka_pose.convention: null` until KUKA ABC is physically verified. Prefer full matrix UDP during commissioning.
+2. Verify `T_base_flange` known poses:
+   - Known Pose 1: translation on one axis.
+   - Known Pose 2: translation on another axis.
+   - Known Pose 3: rotation-heavy pose.
+   - Known Pose 4: combined translation and rotation.
+3. For each pose compare:
+   - Teach Pendant values.
+   - UDP `T_base_flange` reported by `/robot/pose`.
+   - Grasshopper flange plane origin and signed axes.
+4. Mount and identify the real Zivid camera; record serial/model if available.
+5. Perform real Eye-in-Hand calibration; do not copy mock calibration into a physical setup.
+6. Scan an asymmetric fiducial target.
+7. Verify signed X/Y/Z directions and transformed base-frame fiducial positions.
+8. Only after those checks should captures be used as physical fabrication input.
+
+Future multi-view work should introduce a first-class `ScanSession` grouping multiple committed capture manifests. Registration, planning, and closed-loop fabrication control remain deferred and must not be added to this perception/data backend without a separate design review.
