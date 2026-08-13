@@ -27,9 +27,15 @@ from zivid_camera_manager import ZividCameraManager
 LOGGER = logging.getLogger(__name__)
 
 
+class CaptureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str | None = None
+
+
 class WCSComputeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     capture_id: str | None = None
+    request_id: str | None = None
 
 
 def create_app(
@@ -135,8 +141,8 @@ def create_app(
         return calibration.reset()
 
     @app.post("/capture")
-    def production_capture() -> dict[str, Any]:
-        return capture.capture()
+    def production_capture(request_body: CaptureRequest | None = None) -> dict[str, Any]:
+        return capture.capture(None if request_body is None else request_body.request_id)
 
     @app.post("/wcs/compute")
     def compute_wcs(request_body: WCSComputeRequest | None = None) -> dict[str, Any]:

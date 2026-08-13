@@ -13,6 +13,7 @@ robot_udp:
   socket_timeout_ms: 200
   shutdown_timeout_ms: 2000
   max_packet_bytes: 16384
+  expected_sender_ip: null # set to the KUKA sender IP for real-cell commissioning
   connection_timeout_ms: 1000
   # Initial commissioning defaults only. Measure and tune for the robot/cell.
   max_pose_age_ms: 250
@@ -54,6 +55,7 @@ calibration:
 capture:
   preview_point_target: 10000
   ply_binary: true
+  idempotency_cache_size: 100
 
 wcs:
   crop:

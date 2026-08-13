@@ -34,6 +34,7 @@ LOGGER = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class RobotPose:
     seq: int | None
+    session_id: str | None
     robot_timestamp: int | float | str | None
     received_timestamp_utc: str
     received_monotonic: float
@@ -45,6 +46,7 @@ class RobotPose:
     c: float | None
     T_base_flange: NDArray[np.float64] | None
     state: str | None
+    pose_semantics: dict[str, Any]
     raw_message: str
 
     @property
@@ -54,6 +56,7 @@ class RobotPose:
     def to_dict(self, *, include_raw_message: bool = False) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "seq": self.seq,
+            "session_id": self.session_id,
             "robot_timestamp": self.robot_timestamp,
             "received_timestamp_utc": self.received_timestamp_utc,
             "x": self.x,
@@ -63,6 +66,7 @@ class RobotPose:
             "b": self.b,
             "c": self.c,
             "state": self.state,
+            "pose_semantics": dict(self.pose_semantics),
             "matrix_valid": self.matrix_valid,
             "T_base_flange": (
                 matrix_to_list(self.T_base_flange) if self.T_base_flange is not None else None
@@ -99,6 +103,40 @@ class StationaryStatus:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class IntervalStationaryStatus:
+    exists: bool
+    fresh: bool
+    stationary: bool
+    coverage_sufficient: bool
+    pose_age_ms: float | None
+    interval_start_monotonic: float
+    interval_end_monotonic: float
+    coverage_start_monotonic: float | None
+    coverage_end_monotonic: float | None
+    sample_count: int
+    max_translation_motion_mm: float | None
+    max_rotation_motion_deg: float | None
+    reason: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "exists": self.exists,
+            "fresh": self.fresh,
+            "stationary": self.stationary,
+            "coverage_sufficient": self.coverage_sufficient,
+            "pose_age_ms": self.pose_age_ms,
+            "interval_start_monotonic": self.interval_start_monotonic,
+            "interval_end_monotonic": self.interval_end_monotonic,
+            "coverage_start_monotonic": self.coverage_start_monotonic,
+            "coverage_end_monotonic": self.coverage_end_monotonic,
+            "sample_count": self.sample_count,
+            "max_translation_motion_mm": self.max_translation_motion_mm,
+            "max_rotation_motion_deg": self.max_rotation_motion_deg,
+            "reason": self.reason,
+        }
+
+
 def _received_times(
     received_timestamp_utc: str | None,
     received_monotonic: float | None,
@@ -118,6 +156,59 @@ def _optional_seq(value: Any) -> int | None:
     return None if value in (None, "") else int(value)
 
 
+POSE_SEMANTIC_KEYS = (
+    "source_variable",
+    "source_frame",
+    "target_frame",
+    "matrix_name",
+    "units",
+    "base_id",
+    "tool_id",
+    "robot_id",
+    "controller_id",
+    "external_axis_state",
+)
+
+
+def _optional_str(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+def _pose_semantics_from_mapping(
+    normalized: dict[str, Any], *, has_matrix: bool
+) -> dict[str, Any]:
+    nested = normalized.get("pose_semantics", normalized.get("semantics"))
+    semantics: dict[str, Any] = {}
+    if isinstance(nested, dict):
+        semantics.update({str(key).lower(): value for key, value in nested.items()})
+    for key in POSE_SEMANTIC_KEYS:
+        if normalized.get(key) is not None:
+            semantics[key] = normalized[key]
+
+    # Backward-compatible matrix packets in this project have always meant
+    # T_base_flange in millimetres, but software metadata is not physical proof.
+    if has_matrix:
+        semantics.setdefault("matrix_name", "T_base_flange")
+        semantics.setdefault("source_frame", "flange")
+        semantics.setdefault("target_frame", "base")
+        semantics.setdefault("units", "mm")
+    required = {
+        "matrix_name": "T_base_flange",
+        "source_frame": "flange",
+        "target_frame": "base",
+        "units": "mm",
+    }
+    matches_required = all(str(semantics.get(key, "")).lower() == value.lower() for key, value in required.items())
+    semantics["software_semantics_valid"] = bool(matches_required)
+    semantics.setdefault(
+        "validation_status",
+        "SOFTWARE_METADATA_ONLY_PHYSICAL_COMMISSIONING_REQUIRED" if matches_required else "UNKNOWN_OR_INCOMPLETE",
+    )
+    return semantics
+
+
 def _pose_from_mapping(
     payload: dict[str, Any],
     raw_message: str,
@@ -135,6 +226,7 @@ def _pose_from_mapping(
         received_timestamp_utc, received_monotonic
     )
     matrix_value = normalized.get("t_base_flange", normalized.get("matrix"))
+    has_matrix = matrix_value is not None
     T_base_flange: NDArray[np.float64] | None
     if matrix_value is not None:
         if isinstance(matrix_value, str):
@@ -158,6 +250,7 @@ def _pose_from_mapping(
 
     return RobotPose(
         seq=_optional_seq(normalized.get("seq")),
+        session_id=_optional_str(normalized.get("session_id")),
         robot_timestamp=normalized.get("timestamp"),
         received_timestamp_utc=utc_timestamp,
         received_monotonic=monotonic_timestamp,
@@ -169,6 +262,7 @@ def _pose_from_mapping(
         c=_optional_float(normalized, "c"),
         T_base_flange=T_base_flange,
         state=None if normalized.get("state") is None else str(normalized["state"]),
+        pose_semantics=_pose_semantics_from_mapping(normalized, has_matrix=has_matrix),
         raw_message=raw_message,
     )
 
@@ -326,6 +420,72 @@ def poses_stationary(
     )
 
 
+
+def poses_stationary_for_interval(
+    poses: list[RobotPose],
+    *,
+    interval_start_monotonic: float,
+    interval_end_monotonic: float,
+    now_monotonic: float,
+    max_pose_age_ms: float,
+    settle_time_ms: float,
+    max_translation_motion_mm: float,
+    max_rotation_motion_deg: float,
+) -> IntervalStationaryStatus:
+    if interval_end_monotonic < interval_start_monotonic:
+        raise ValueError("interval_end_monotonic must be >= interval_start_monotonic")
+    if not poses:
+        return IntervalStationaryStatus(False, False, False, False, None, interval_start_monotonic, interval_end_monotonic, None, None, 0, None, None, "NO_ROBOT_POSE")
+
+    latest = poses[-1]
+    age_ms = max(0.0, (now_monotonic - latest.received_monotonic) * 1000.0)
+    fresh = age_ms <= max_pose_age_ms
+    if not fresh:
+        return IntervalStationaryStatus(True, False, False, False, age_ms, interval_start_monotonic, interval_end_monotonic, None, None, 0, None, None, "ROBOT_POSE_STALE")
+
+    matrix_poses = [pose for pose in poses if pose.T_base_flange is not None]
+    if not matrix_poses:
+        return IntervalStationaryStatus(True, True, False, False, age_ms, interval_start_monotonic, interval_end_monotonic, None, None, 0, None, None, "KUKA_CONVENTION_UNVERIFIED")
+
+    required_start = interval_start_monotonic - settle_time_ms / 1000.0
+    before_start = [pose for pose in matrix_poses if pose.received_monotonic <= interval_start_monotonic]
+    after_end = [pose for pose in matrix_poses if pose.received_monotonic >= interval_end_monotonic]
+    pre_coverage = not settle_time_ms > 0 or bool(matrix_poses and matrix_poses[0].received_monotonic <= required_start)
+    interval_coverage = bool(before_start and after_end)
+    if not pre_coverage or not interval_coverage:
+        coverage_start = matrix_poses[0].received_monotonic if matrix_poses else None
+        coverage_end = matrix_poses[-1].received_monotonic if matrix_poses else None
+        return IntervalStationaryStatus(
+            True, True, False, False, age_ms, interval_start_monotonic, interval_end_monotonic,
+            coverage_start, coverage_end, len(matrix_poses), None, None, "ROBOT_POSE_COVERAGE_INSUFFICIENT"
+        )
+
+    window_start = required_start
+    window_end = interval_end_monotonic
+    before_window = [pose for pose in matrix_poses if pose.received_monotonic < window_start]
+    window = [pose for pose in matrix_poses if window_start <= pose.received_monotonic <= window_end]
+    if before_window:
+        window.insert(0, before_window[-1])
+    if after_end and (not window or window[-1].received_monotonic < interval_end_monotonic):
+        window.append(after_end[0])
+
+    transforms = [pose.T_base_flange for pose in window if pose.T_base_flange is not None]
+    maximum_translation = 0.0
+    maximum_rotation = 0.0
+    for index, first in enumerate(transforms):
+        for second in transforms[index + 1:]:
+            maximum_translation = max(maximum_translation, translation_distance_mm(first, second))
+            maximum_rotation = max(maximum_rotation, rotation_distance_deg(first, second))
+    stationary = maximum_translation <= max_translation_motion_mm and maximum_rotation <= max_rotation_motion_deg
+    return IntervalStationaryStatus(
+        True, True, stationary, True, age_ms, interval_start_monotonic, interval_end_monotonic,
+        window[0].received_monotonic if window else None,
+        window[-1].received_monotonic if window else None,
+        len(window), maximum_translation, maximum_rotation,
+        None if stationary else "ROBOT_MOVED_DURING_CAPTURE",
+    )
+
+
 class RobotUDPServer:
     """Continuously receive actual robot poses without blocking HTTP requests."""
 
@@ -340,8 +500,15 @@ class RobotUDPServer:
         self._running = False
         self._last_sender: tuple[str, int] | None = None
         self._last_datagram_monotonic: float | None = None
+        self._current_session_id: str | None = None
+        self._last_seq: int | None = None
         self._received_packets = 0
+        self._accepted_packets = 0
         self._malformed_packets = 0
+        self._duplicate_packets = 0
+        self._out_of_order_packets = 0
+        self._session_restart_count = 0
+        self._rejected_sender_packets = 0
         self._last_error: str | None = None
 
     def start(self) -> None:
@@ -393,7 +560,53 @@ class RobotUDPServer:
             self._running = False
             self._socket = None
 
+    def _expected_sender_allowed(self, sender: tuple[str, int]) -> bool:
+        expected = self.config.get("expected_sender_ip")
+        return expected in (None, "") or sender[0] == str(expected)
+
+    def _accept_pose_locked(self, pose: RobotPose, sender: tuple[str, int]) -> bool:
+        session_id = pose.session_id or "legacy-no-session"
+        if self._current_session_id is None:
+            self._current_session_id = session_id
+        elif session_id != self._current_session_id:
+            self._history.clear()
+            self._last_seq = None
+            self._current_session_id = session_id
+            self._session_restart_count += 1
+
+        if pose.seq is not None and self._last_seq is not None:
+            if pose.seq == self._last_seq:
+                self._duplicate_packets += 1
+                self._last_datagram_monotonic = pose.received_monotonic
+                self._last_sender = sender
+                self._last_error = "DUPLICATE_SEQUENCE_IGNORED"
+                return False
+            if pose.seq < self._last_seq:
+                self._out_of_order_packets += 1
+                self._last_datagram_monotonic = pose.received_monotonic
+                self._last_sender = sender
+                self._last_error = "OUT_OF_ORDER_SEQUENCE_IGNORED"
+                return False
+
+        self._history.append(pose)
+        if pose.seq is not None:
+            self._last_seq = pose.seq
+        self._accepted_packets += 1
+        self._last_datagram_monotonic = pose.received_monotonic
+        self._last_sender = sender
+        self._last_error = None
+        return True
+
     def _handle_packet(self, packet: bytes, sender: tuple[str, int]) -> None:
+        if not self._expected_sender_allowed(sender):
+            with self._lock:
+                self._received_packets += 1
+                self._rejected_sender_packets += 1
+                self._last_error = "UNEXPECTED_UDP_SENDER"
+                self._last_datagram_monotonic = time.monotonic()
+                self._last_sender = sender
+            LOGGER.warning("Rejected robot UDP packet from unexpected sender %s:%d", *sender)
+            return
         try:
             pose = parse_robot_packet(
                 packet,
@@ -402,6 +615,7 @@ class RobotUDPServer:
             )
         except Exception as exc:
             with self._lock:
+                self._received_packets += 1
                 self._malformed_packets += 1
                 self._last_error = str(exc)
                 self._last_datagram_monotonic = time.monotonic()
@@ -410,12 +624,9 @@ class RobotUDPServer:
             return
         with self._lock:
             was_connected = self._connected_locked(time.monotonic())
-            self._history.append(pose)
             self._received_packets += 1
-            self._last_datagram_monotonic = pose.received_monotonic
-            self._last_sender = sender
-            self._last_error = None
-        if not was_connected:
+            accepted = self._accept_pose_locked(pose, sender)
+        if accepted and not was_connected:
             LOGGER.info("Robot UDP stream connected from %s:%d", *sender)
 
     def inject_pose(self, pose: RobotPose) -> None:
@@ -423,12 +634,11 @@ class RobotUDPServer:
         copied = replace(
             pose,
             T_base_flange=(None if pose.T_base_flange is None else pose.T_base_flange.copy()),
+            pose_semantics=dict(pose.pose_semantics),
         )
         with self._lock:
-            self._history.append(copied)
             self._received_packets += 1
-            self._last_datagram_monotonic = copied.received_monotonic
-            self._last_sender = ("mock", 0)
+            self._accept_pose_locked(copied, ("mock", 0))
 
     def latest_pose(self) -> RobotPose | None:
         with self._lock:
@@ -438,6 +648,7 @@ class RobotUDPServer:
             return replace(
                 pose,
                 T_base_flange=(None if pose.T_base_flange is None else pose.T_base_flange.copy()),
+                pose_semantics=dict(pose.pose_semantics),
             )
 
     def pose_history(self) -> list[RobotPose]:
@@ -448,6 +659,7 @@ class RobotUDPServer:
                     T_base_flange=(
                         None if pose.T_base_flange is None else pose.T_base_flange.copy()
                     ),
+                    pose_semantics=dict(pose.pose_semantics),
                 )
                 for pose in self._history
             ]
@@ -455,6 +667,25 @@ class RobotUDPServer:
     def stationary_status(self, *, now_monotonic: float | None = None) -> StationaryStatus:
         return poses_stationary(
             self.pose_history(),
+            now_monotonic=time.monotonic() if now_monotonic is None else now_monotonic,
+            max_pose_age_ms=float(self.config["max_pose_age_ms"]),
+            settle_time_ms=float(self.config["settle_time_ms"]),
+            max_translation_motion_mm=float(self.config["max_translation_motion_mm"]),
+            max_rotation_motion_deg=float(self.config["max_rotation_motion_deg"]),
+        )
+
+
+    def stationary_status_for_interval(
+        self,
+        *,
+        interval_start_monotonic: float,
+        interval_end_monotonic: float,
+        now_monotonic: float | None = None,
+    ) -> IntervalStationaryStatus:
+        return poses_stationary_for_interval(
+            self.pose_history(),
+            interval_start_monotonic=interval_start_monotonic,
+            interval_end_monotonic=interval_end_monotonic,
             now_monotonic=time.monotonic() if now_monotonic is None else now_monotonic,
             max_pose_age_ms=float(self.config["max_pose_age_ms"]),
             settle_time_ms=float(self.config["settle_time_ms"]),
@@ -520,7 +751,18 @@ class RobotUDPServer:
         with self._lock:
             connected = self._connected_locked(now)
             sender = self._last_sender
-            counters = (self._received_packets, self._malformed_packets, self._last_error)
+            counters = (
+                self._received_packets,
+                self._accepted_packets,
+                self._malformed_packets,
+                self._duplicate_packets,
+                self._out_of_order_packets,
+                self._session_restart_count,
+                self._rejected_sender_packets,
+                self._last_error,
+                self._current_session_id,
+                self._last_seq,
+            )
         raw_pose = None
         if latest is not None:
             raw_pose = {
@@ -539,7 +781,10 @@ class RobotUDPServer:
             "stationary": stationary.stationary,
             "stationary_reason": stationary.reason,
             "seq": None if latest is None else latest.seq,
+            "session_id": None if latest is None else latest.session_id,
+            "last_seq": counters[9],
             "state": None if latest is None else latest.state,
+            "pose_semantics": None if latest is None else latest.pose_semantics,
             "raw_pose": raw_pose,
             "T_base_flange": (
                 None
@@ -548,6 +793,12 @@ class RobotUDPServer:
             ),
             "sender": None if sender is None else {"ip": sender[0], "port": sender[1]},
             "received_packets": counters[0],
-            "malformed_packets": counters[1],
-            "last_error": counters[2],
+            "accepted_packets": counters[1],
+            "malformed_packets": counters[2],
+            "duplicate_packets": counters[3],
+            "out_of_order_packets": counters[4],
+            "session_restart_count": counters[5],
+            "rejected_sender_packets": counters[6],
+            "current_session_id": counters[8],
+            "last_error": counters[7],
         }

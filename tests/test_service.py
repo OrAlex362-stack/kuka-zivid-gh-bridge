@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import threading
 import time
 
 from fastapi.testclient import TestClient
@@ -69,6 +70,21 @@ def _inject_pose(app, seq: int, x: float) -> None:
     )
 
 
+def _start_pose_feeder(app, start_seq: int, x: float = 50.0):
+    stop = threading.Event()
+
+    def feed() -> None:
+        seq = start_seq
+        while not stop.is_set():
+            _inject_pose(app, seq, x)
+            seq += 1
+            time.sleep(0.001)
+
+    thread = threading.Thread(target=feed)
+    thread.start()
+    return stop, thread
+
+
 def test_mock_http_calibration_and_capture_pipeline_returns_metadata_only(tmp_path) -> None:
     config = _test_config(tmp_path)
     config["robot_udp"]["settle_time_ms"] = 0
@@ -85,10 +101,45 @@ def test_mock_http_calibration_and_capture_pipeline_returns_metadata_only(tmp_pa
         assert solved.status_code == 200
         assert solved.json()["sample_count"] == 2
 
-        captured = client.post("/capture")
+        stop, feeder = _start_pose_feeder(app, 3, 50.0)
+        try:
+            captured = client.post("/capture")
+        finally:
+            stop.set()
+            feeder.join(timeout=1.0)
         assert captured.status_code == 200
         payload = captured.json()
         assert payload["capture_id"] == "capture_0001"
         assert payload["point_count"] == 30
         assert "points" not in payload
         assert Path(payload["files"]["ply"]).is_file()
+
+
+
+def test_duplicate_capture_request_id_replays_first_result(tmp_path) -> None:
+    config = _test_config(tmp_path)
+    config["robot_udp"]["settle_time_ms"] = 0
+    config["robot_udp"]["max_pose_age_ms"] = 5000
+    config["zivid"]["mock_point_count_per_plane"] = 3
+    config["capture"]["preview_point_target"] = 3
+    app = create_app(config_override=config)
+    with TestClient(app) as client:
+        _inject_pose(app, 1, 0.0)
+        assert client.post("/calibration/sample").status_code == 200
+        _inject_pose(app, 2, 50.0)
+        assert client.post("/calibration/sample").status_code == 200
+        assert client.post("/calibration/solve").status_code == 200
+
+        stop, feeder = _start_pose_feeder(app, 3, 50.0)
+        try:
+            first = client.post("/capture", json={"request_id": "gh-capture-1"})
+        finally:
+            stop.set()
+            feeder.join(timeout=1.0)
+        second = client.post("/capture", json={"request_id": "gh-capture-1"})
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["capture_id"] == second.json()["capture_id"]
+        assert second.json()["idempotent_replay"] is True
+        assert len(list((tmp_path / "captures").glob("capture_*"))) == 1

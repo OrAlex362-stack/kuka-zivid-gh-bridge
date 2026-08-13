@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import threading
 from typing import Any
 
@@ -32,6 +34,28 @@ def _call_or_value(value: Any) -> Any:
     return value() if callable(value) else value
 
 
+def _git_commit() -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+    except Exception:
+        return None
+    value = completed.stdout.strip()
+    return value or None
+
+
+def _metadata_mapping(payload: dict[str, Any] | None, defaults: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(defaults)
+    if payload:
+        merged.update(payload)
+    return merged
+
+
 def serialize_calibration_result(
     T_flange_camera: Any,
     residuals: list[dict[str, float]],
@@ -42,6 +66,12 @@ def serialize_calibration_result(
     mock: bool = False,
     synthetic: bool = False,
     warning: str | None = None,
+    camera: dict[str, Any] | None = None,
+    robot: dict[str, Any] | None = None,
+    mount: dict[str, Any] | None = None,
+    calibration: dict[str, Any] | None = None,
+    source: dict[str, Any] | None = None,
+    units: str = "mm",
 ) -> dict[str, Any]:
     transform = validate_transform(T_flange_camera, name="T_flange_camera")
     translations = [float(item["translation"]) for item in residuals]
@@ -51,6 +81,29 @@ def serialize_calibration_result(
         "timestamp": timestamp or utc_now_iso(),
         "sample_count": int(sample_count),
         "status": str(status),
+        "units": str(units),
+        "classification": "mock_synthetic" if mock or synthetic else "production_or_commissioning",
+        "camera": _metadata_mapping(camera, {"serial_number": None, "model": None}),
+        "robot": _metadata_mapping(robot, {"robot_id": None, "controller_id": None}),
+        "mount": _metadata_mapping(mount, {"mount_id": None}),
+        "calibration": _metadata_mapping(
+            calibration,
+            {
+                "type": "eye_in_hand",
+                "timestamp": timestamp or utc_now_iso(),
+                "sample_count": int(sample_count),
+                "target_description": None,
+                "sdk_version": None,
+            },
+        ),
+        "source": _metadata_mapping(
+            source,
+            {
+                "software_version": None,
+                "git_commit": _git_commit(),
+                "python_version": sys.version.split()[0],
+            },
+        ),
         "transform": {
             "name": "T_flange_camera",
             "from": "camera",
@@ -398,6 +451,7 @@ class CameraRobotCalibration:
                     "Eye-in-Hand calibration returned an invalid result.",
                     details={"status": status},
                 )
+            camera_status = self.camera.status()
             payload = serialize_calibration_result(
                 transform,
                 residuals,
@@ -408,6 +462,18 @@ class CameraRobotCalibration:
                 warning=(
                     MOCK_CALIBRATION_WARNING if self.camera.mode == "mock" else None
                 ),
+                camera={
+                    "serial_number": camera_status.get("serial_number"),
+                    "model": camera_status.get("model"),
+                    "mode": camera_status.get("mode"),
+                },
+                calibration={
+                    "type": "eye_in_hand",
+                    "timestamp": utc_now_iso(),
+                    "sample_count": len(inputs),
+                    "target_description": self.config.get("target_description"),
+                    "sdk_version": camera_status.get("sdk_python_version"),
+                },
             )
             atomic_write_yaml(self.result_file, payload)
             LOGGER.info("Calibration solved; T_flange_camera saved to %s", self.result_file)

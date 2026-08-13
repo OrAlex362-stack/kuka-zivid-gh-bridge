@@ -25,16 +25,28 @@ def _matrix(x: float, y: float, z: float) -> list[list[float]]:
     return value.tolist()
 
 
-def build_packet(mode: str, seq: int, x: float, y: float, z: float) -> str:
+def _semantics() -> dict[str, str]:
+    return {
+        "matrix_name": "T_base_flange",
+        "source_frame": "flange",
+        "target_frame": "base",
+        "units": "mm",
+        "source_variable": "fake_robot_matrix",
+    }
+
+
+def build_packet(mode: str, seq: int, x: float, y: float, z: float, session_id: str = "fake-robot-session") -> str:
     timestamp = time.time()
     if mode == "json-matrix":
         return json.dumps(
             {
                 "type": "POSE",
+                "session_id": session_id,
                 "seq": seq,
                 "timestamp": timestamp,
                 "T_base_flange": _matrix(x, y, z),
                 "state": "READY",
+                **_semantics(),
             },
             separators=(",", ":"),
         )
@@ -42,6 +54,7 @@ def build_packet(mode: str, seq: int, x: float, y: float, z: float) -> str:
         return json.dumps(
             {
                 "type": "POSE",
+                "session_id": session_id,
                 "seq": seq,
                 "timestamp": timestamp,
                 "x": x,
@@ -56,9 +69,9 @@ def build_packet(mode: str, seq: int, x: float, y: float, z: float) -> str:
         )
     if mode == "delimited-matrix":
         flat = ",".join(str(item) for row in _matrix(x, y, z) for item in row)
-        return f"MATRIX;SEQ={seq};TIMESTAMP={timestamp};T={flat};STATE=READY"
+        return f"MATRIX;SESSION_ID={session_id};SEQ={seq};TIMESTAMP={timestamp};T={flat};STATE=READY;MATRIX_NAME=T_base_flange;SOURCE_FRAME=flange;TARGET_FRAME=base;UNITS=mm"
     return (
-        f"POSE;SEQ={seq};TIMESTAMP={timestamp};X={x};Y={y};Z={z};"
+        f"POSE;SESSION_ID={session_id};SEQ={seq};TIMESTAMP={timestamp};X={x};Y={y};Z={z};"
         "A=0;B=0;C=0;STATE=READY"
     )
 
@@ -77,6 +90,7 @@ def main() -> int:
     parser.add_argument("--x", type=float, default=1000.0)
     parser.add_argument("--y", type=float, default=0.0)
     parser.add_argument("--z", type=float, default=800.0)
+    parser.add_argument("--session-id", default="fake-robot-session")
     parser.add_argument(
         "--motion-amplitude-mm",
         type=float,
@@ -98,7 +112,7 @@ def main() -> int:
     try:
         while True:
             x = args.x + args.motion_amplitude_mm * np.sin(2.0 * np.pi * (time.monotonic() - started))
-            packet = build_packet(args.mode, seq, float(x), args.y, args.z)
+            packet = build_packet(args.mode, seq, float(x), args.y, args.z, args.session_id)
             udp_socket.sendto(packet.encode("utf-8"), (host, port))
             seq += 1
             time.sleep(interval)
