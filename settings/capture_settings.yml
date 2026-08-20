@@ -2,18 +2,18 @@ __version__: 27
 Settings:
     Acquisitions:
         - Acquisition:
-              Aperture: __not_set__
-              Brightness: __not_set__
-              ExposureTime: __not_set__
-              Gain: __not_set__
+              Aperture: 8.0
+              Brightness: 1.0
+              ExposureTime: 5000
+              Gain: 1.0
     Color:
         __version__: 9
         Settings2D:
             Acquisitions:
                 - Acquisition:
-                      Aperture: __not_set__
-                      Brightness: __not_set__
-                      ExposureTime: __not_set__
-                      Gain: __not_set__
+                      Aperture: 8.0
+                      Brightness: 1.0
+                      ExposureTime: 5000
+                      Gain: 1.0
             Diagnostics:
-                Enabled: __not_set__
+                Enabled: false

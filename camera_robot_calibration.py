@@ -56,6 +56,20 @@ def _metadata_mapping(payload: dict[str, Any] | None, defaults: dict[str, Any]) 
     return merged
 
 
+def _first_non_empty(*values: Any) -> Any | None:
+    """Return the first non-empty provenance value without unsafe equality checks."""
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                return stripped
+            continue
+        return value
+    return None
+
+
 def serialize_calibration_result(
     T_flange_camera: Any,
     residuals: list[dict[str, float]],
@@ -73,65 +87,157 @@ def serialize_calibration_result(
     source: dict[str, Any] | None = None,
     units: str = "mm",
 ) -> dict[str, Any]:
+    """
+    Serialize a production/commissioning Eye-in-Hand result.
+
+    The artifact intentionally contains both:
+    1. provenance sections required by the production validator
+       (camera / robot / calibration), and
+    2. compatibility fields used by the existing Grasshopper/backend workflow.
+    """
     transform = validate_transform(T_flange_camera, name="T_flange_camera")
+    matrix = matrix_to_list(transform)
+    created_at = timestamp or utc_now_iso()
+
     translations = [float(item["translation"]) for item in residuals]
     rotations = [float(item["rotation"]) for item in residuals]
+
+    camera_meta = _metadata_mapping(
+        camera,
+        {
+            "serial_number": None,
+            "model": None,
+            "mode": None,
+        },
+    )
+    robot_meta = _metadata_mapping(
+        robot,
+        {
+            "robot_id": None,
+            "controller_id": None,
+            "session_id": None,
+            "pose_source": "Grasshopper Robot Pose",
+            "pose_transform": "T_base_flange",
+            "units": str(units),
+        },
+    )
+    calibration_meta = _metadata_mapping(
+        calibration,
+        {
+            "type": "eye_in_hand",
+            "method": "zivid.calibration.calibrate_eye_in_hand",
+            "timestamp": created_at,
+            "sample_count": int(sample_count),
+            "target_description": "Zivid calibration board",
+            "sdk_version": None,
+            "transform_name": "T_flange_camera",
+            "source_frame": "camera",
+            "target_frame": "flange",
+            "transform_convention": "T_target_source",
+            "units": str(units),
+        },
+    )
+    source_meta = _metadata_mapping(
+        source,
+        {
+            "software_version": None,
+            "git_commit": _git_commit(),
+            "python_version": sys.version.split()[0],
+        },
+    )
+
+    translation_mean = float(np.mean(translations)) if translations else None
+    translation_max = float(np.max(translations)) if translations else None
+    rotation_mean = float(np.mean(rotations)) if rotations else None
+    rotation_max = float(np.max(rotations)) if rotations else None
+
+    rotation_matrix = transform[:3, :3]
+    rotation_det = float(np.linalg.det(rotation_matrix))
+    rotation_orthogonality_error = float(
+        np.linalg.norm(rotation_matrix.T @ rotation_matrix - np.eye(3))
+    )
+
     payload = {
+        # ----------------------------------------------------
+        # Schema / compatibility metadata
+        # ----------------------------------------------------
+        "schema_version": 2,
         "calibration_type": "eye_in_hand",
-        "timestamp": timestamp or utc_now_iso(),
-        "sample_count": int(sample_count),
+        "method": "zivid.calibration.calibrate_eye_in_hand",
+        "created_at": created_at,
+        "timestamp": created_at,
         "status": str(status),
-        "units": str(units),
+        "sample_count": int(sample_count),
         "classification": "mock_synthetic" if mock or synthetic else "production_or_commissioning",
-        "camera": _metadata_mapping(camera, {"serial_number": None, "model": None}),
-        "robot": _metadata_mapping(robot, {"robot_id": None, "controller_id": None}),
+        "mock": bool(mock),
+        "is_mock": bool(mock or synthetic),
+        "synthetic": bool(synthetic),
+        "transform_convention": "T_target_source",
+        "units": str(units),
+        "source_frame": "camera",
+        "target_frame": "flange",
+        "transform_name": "T_flange_camera",
+
+        # ----------------------------------------------------
+        # Required production provenance
+        # ----------------------------------------------------
+        "camera": camera_meta,
+        "robot": robot_meta,
         "mount": _metadata_mapping(mount, {"mount_id": None}),
-        "calibration": _metadata_mapping(
-            calibration,
-            {
-                "type": "eye_in_hand",
-                "timestamp": timestamp or utc_now_iso(),
-                "sample_count": int(sample_count),
-                "target_description": None,
-                "sdk_version": None,
-            },
-        ),
-        "source": _metadata_mapping(
-            source,
-            {
-                "software_version": None,
-                "git_commit": _git_commit(),
-                "python_version": sys.version.split()[0],
-            },
-        ),
+        "calibration": calibration_meta,
+        "source": source_meta,
+
+        # ----------------------------------------------------
+        # Transform: canonical + backward-compatible form
+        # ----------------------------------------------------
+        "T_flange_camera": matrix,
         "transform": {
             "name": "T_flange_camera",
             "from": "camera",
             "to": "flange",
-            "matrix": matrix_to_list(transform),
+            "source_frame": "camera",
+            "target_frame": "flange",
+            "units": str(units),
+            "matrix": matrix,
         },
+
+        # ----------------------------------------------------
+        # Residuals: retain both generic and unit-explicit keys
+        # ----------------------------------------------------
         "residuals": [
             {
                 "sample": index,
                 "translation": float(item["translation"]),
                 "rotation": float(item["rotation"]),
+                "translation_mm": float(item["translation"]),
+                "rotation_deg": float(item["rotation"]),
             }
             for index, item in enumerate(residuals, start=1)
         ],
+
         "summary": {
-            "translation_mean": float(np.mean(translations)) if translations else None,
-            "translation_max": float(np.max(translations)) if translations else None,
-            "rotation_mean": float(np.mean(rotations)) if rotations else None,
-            "rotation_max": float(np.max(rotations)) if rotations else None,
+            "translation_mean": translation_mean,
+            "translation_max": translation_max,
+            "rotation_mean": rotation_mean,
+            "rotation_max": rotation_max,
+        },
+
+        # Existing result format compatibility.
+        "quality": {
+            "translation_mean_mm": translation_mean,
+            "translation_max_mm": translation_max,
+            "rotation_mean_deg": rotation_mean,
+            "rotation_max_deg": rotation_max,
+            "rotation_det": rotation_det,
+            "rotation_orthogonality_error": rotation_orthogonality_error,
         },
     }
-    if mock:
-        payload["mock"] = True
-    if synthetic:
-        payload["synthetic"] = True
+
     if warning is not None:
         payload["warning"] = str(warning)
+
     return payload
+
 
 
 class CameraRobotCalibration:
@@ -452,6 +558,66 @@ class CameraRobotCalibration:
                     details={"status": status},
                 )
             camera_status = self.camera.status()
+
+            # ------------------------------------------------
+            # Build production provenance from the live camera,
+            # the latest UDP robot state, and configuration.
+            # ------------------------------------------------
+            latest_pose = self.robot.latest_pose()
+            pose_metadata: dict[str, Any] = {}
+            if latest_pose is not None:
+                try:
+                    pose_metadata = latest_pose.to_dict(include_raw_message=False)
+                except TypeError:
+                    # Compatibility with RobotPose implementations whose
+                    # to_dict() has no keyword argument.
+                    try:
+                        pose_metadata = latest_pose.to_dict()
+                    except Exception:
+                        pose_metadata = {}
+                except Exception:
+                    pose_metadata = {}
+
+            robot_config = self.root_config.get("robot", {})
+            if not isinstance(robot_config, dict):
+                robot_config = {}
+
+            robot_id = _first_non_empty(
+                pose_metadata.get("robot_id"),
+                getattr(latest_pose, "robot_id", None) if latest_pose is not None else None,
+                robot_config.get("robot_id"),
+                self.root_config.get("robot_id"),
+            )
+            controller_id = _first_non_empty(
+                pose_metadata.get("controller_id"),
+                getattr(latest_pose, "controller_id", None) if latest_pose is not None else None,
+                robot_config.get("controller_id"),
+            )
+            session_id = _first_non_empty(
+                pose_metadata.get("session_id"),
+                getattr(latest_pose, "session_id", None) if latest_pose is not None else None,
+            )
+
+            # Production calibration must be attributable to a specific
+            # camera and robot. Fail here rather than writing an artifact
+            # that /capture will later reject.
+            missing_provenance: list[str] = []
+            if self.camera.mode != "mock":
+                if not _first_non_empty(camera_status.get("serial_number")):
+                    missing_provenance.append("camera.serial_number")
+                if not _first_non_empty(camera_status.get("model")):
+                    missing_provenance.append("camera.model")
+                if not robot_id:
+                    missing_provenance.append("robot.robot_id")
+
+            if missing_provenance:
+                raise BridgeError(
+                    "CALIBRATION_PROVENANCE_INCOMPLETE",
+                    "Cannot save production calibration because required provenance is missing.",
+                    status_code=422,
+                    details={"missing": missing_provenance},
+                )
+
             payload = serialize_calibration_result(
                 transform,
                 residuals,
@@ -466,13 +632,39 @@ class CameraRobotCalibration:
                     "serial_number": camera_status.get("serial_number"),
                     "model": camera_status.get("model"),
                     "mode": camera_status.get("mode"),
+                    "sdk_python_version": camera_status.get("sdk_python_version"),
+                    "settings_file": camera_status.get("settings_file"),
+                },
+                robot={
+                    "robot_id": robot_id,
+                    "controller_id": controller_id,
+                    "session_id": session_id,
+                    "pose_source": _first_non_empty(
+                        pose_metadata.get("source_variable"),
+                        pose_metadata.get("pose_source"),
+                        "Grasshopper Robot Pose",
+                    ),
+                    "pose_transform": "T_base_flange",
+                    "units": _first_non_empty(
+                        pose_metadata.get("units"),
+                        "mm",
+                    ),
                 },
                 calibration={
                     "type": "eye_in_hand",
+                    "method": "zivid.calibration.calibrate_eye_in_hand",
                     "timestamp": utc_now_iso(),
                     "sample_count": len(inputs),
-                    "target_description": self.config.get("target_description"),
+                    "target_description": _first_non_empty(
+                        self.config.get("target_description"),
+                        "Zivid calibration board",
+                    ),
                     "sdk_version": camera_status.get("sdk_python_version"),
+                    "transform_name": "T_flange_camera",
+                    "source_frame": "camera",
+                    "target_frame": "flange",
+                    "transform_convention": "T_target_source",
+                    "units": "mm",
                 },
             )
             atomic_write_yaml(self.result_file, payload)

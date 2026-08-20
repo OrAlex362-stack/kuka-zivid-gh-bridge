@@ -3,7 +3,9 @@ from zivid_camera_manager import ZividCameraManager
 
 
 def test_synthetic_mock_capture_works_without_hardware() -> None:
-    manager = ZividCameraManager(load_config())
+    config = load_config()
+    config["zivid"]["mode"] = "mock"
+    manager = ZividCameraManager(config)
     assert manager.connect()
     frame = manager.capture_2d_3d()
     assert frame.mock

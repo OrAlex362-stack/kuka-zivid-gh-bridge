@@ -1,0 +1,144 @@
+schema_version: 2
+snapshot_type: sanitized_physical_validation_calibration
+runtime_use: forbidden
+calibration_type: eye_in_hand
+method: zivid.calibration.calibrate_eye_in_hand
+created_at: '2026-08-20T06:07:10Z'
+status: valid
+mock: false
+synthetic: false
+classification: production_or_commissioning
+sample_count: 10
+transform_convention: T_target_source
+units: mm
+source_frame: camera
+target_frame: flange
+transform_name: T_flange_camera
+camera:
+  serial_number: REDACTED
+  model: Zivid Two+ L100
+  mode: hardware
+robot:
+  robot_id: KUKA_KR10_R1100_sixx
+  pose_source: Grasshopper Robot Pose
+  pose_transform: T_base_flange
+  units: mm
+calibration:
+  type: eye_in_hand
+  method: zivid.calibration.calibrate_eye_in_hand
+  sample_count: 10
+  target_description: Zivid calibration board
+  sdk_version: 2.18.0
+  transform_name: T_flange_camera
+  source_frame: camera
+  target_frame: flange
+  transform_convention: T_target_source
+  units: mm
+T_flange_camera:
+- - -0.0121737830341
+  - 0.998221814632
+  - 0.0583527497947
+  - -139.681411743
+- - -0.998826503754
+  - -0.00940391700715
+  - -0.0475093647838
+  - 57.0793190002
+- - -0.0468761362135
+  - -0.0588626414537
+  - 0.997164905071
+  - 26.2737922668
+- - 0
+  - 0
+  - 0
+  - 1
+transform:
+  name: T_flange_camera
+  from: camera
+  to: flange
+  source_frame: camera
+  target_frame: flange
+  units: mm
+  matrix:
+  - - -0.0121737830341
+    - 0.998221814632
+    - 0.0583527497947
+    - -139.681411743
+  - - -0.998826503754
+    - -0.00940391700715
+    - -0.0475093647838
+    - 57.0793190002
+  - - -0.0468761362135
+    - -0.0588626414537
+    - 0.997164905071
+    - 26.2737922668
+  - - 0
+    - 0
+    - 0
+    - 1
+residuals:
+- sample: 1
+  rotation: 0.239399790764
+  translation: 0.556442260742
+  rotation_deg: 0.239399790764
+  translation_mm: 0.556442260742
+- sample: 2
+  rotation: 0.156666219234
+  translation: 0.556559383869
+  rotation_deg: 0.156666219234
+  translation_mm: 0.556559383869
+- sample: 3
+  rotation: 0.183959752321
+  translation: 0.202242180705
+  rotation_deg: 0.183959752321
+  translation_mm: 0.202242180705
+- sample: 4
+  rotation: 0.227276533842
+  translation: 0.939633846283
+  rotation_deg: 0.227276533842
+  translation_mm: 0.939633846283
+- sample: 5
+  rotation: 0.108182094991
+  translation: 0.269122391939
+  rotation_deg: 0.108182094991
+  translation_mm: 0.269122391939
+- sample: 6
+  rotation: 0.138104334474
+  translation: 0.593716621399
+  rotation_deg: 0.138104334474
+  translation_mm: 0.593716621399
+- sample: 7
+  rotation: 0.246078789234
+  translation: 0.469516068697
+  rotation_deg: 0.246078789234
+  translation_mm: 0.469516068697
+- sample: 8
+  rotation: 0.164592370391
+  translation: 0.677632391453
+  rotation_deg: 0.164592370391
+  translation_mm: 0.677632391453
+- sample: 9
+  rotation: 0.134718760848
+  translation: 0.888903617859
+  rotation_deg: 0.134718760848
+  translation_mm: 0.888903617859
+- sample: 10
+  rotation: 0.1343447119
+  translation: 0.304109185934
+  rotation_deg: 0.1343447119
+  translation_mm: 0.304109185934
+summary:
+  rotation_mean: 0.1733323358
+  rotation_max: 0.246078789234
+  translation_mean: 0.545787794888
+  translation_max: 0.939633846283
+quality:
+  rotation_mean_deg: 0.1733323358
+  rotation_max_deg: 0.246078789234
+  translation_mean_mm: 0.545787794888
+  translation_max_mm: 0.939633846283
+  rotation_det: 1.00000001211
+  rotation_orthogonality_error: 6.33641082381e-08
+notes:
+- Physical camera serial number removed for public snapshot.
+- This calibration snapshot documents the validated transform only; do not copy into
+  data/calibration for runtime use.

@@ -24,6 +24,8 @@ data/calibration/
 
 # Runtime captures
 data/captures/
+data/scans/
+data/projections/
 
 # Large Zivid files
 *.zdf

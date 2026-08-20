@@ -1,0 +1,428 @@
+schema_version: 1
+snapshot_type: sanitized_physical_validation_scan
+runtime_use: forbidden
+scan_id: scan_0004
+state: completed
+created_at: '2026-08-20T07:13:35.589645+00:00'
+finished_at: '2026-08-20T07:15:33.428479+00:00'
+coordinate_frame: base
+units: mm
+calibration:
+  type: eye_in_hand
+  transform_name: T_flange_camera
+  source_frame: camera
+  target_frame: flange
+  source: validation/2026-08-20_physical_base_frame/calibration_results.sanitized.yaml
+transform_convention: T_target_source
+composition: T_base_camera = T_base_flange @ T_flange_camera
+capture_count: 6
+captures:
+- capture_id: capture_0001
+  source_capture_id: capture_0032
+  stationary: true
+  pose_age_ms: 15.99999999962165
+  valid_points: 1685076
+  rgb_available: true
+  source_frame: camera
+  target_frame: base
+  T_base_flange:
+  - - -0.9414633215305829
+    - 0.25154126015570344
+    - -0.2244411028574798
+    - 610.067626953125
+  - - 0.22773592184644886
+    - 0.9654408871564104
+    - 0.12672901525456298
+    - -112.12545776367188
+  - - 0.2485621936525125
+    - 0.06819741817637902
+    - -0.966212165127684
+    - 911.9794311523438
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_flange_camera:
+  - - -0.0121737830341
+    - 0.998221814632
+    - 0.0583527497947
+    - -139.681411743
+  - - -0.998826503754
+    - -0.00940391700715
+    - -0.0475093647838
+    - 57.0793190002
+  - - -0.0468761362135
+    - -0.0588626414537
+    - 0.997164905071
+    - 26.2737922668
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_base_camera:
+  - - -0.22926397551086475
+    - -0.9289435021971338
+    - -0.29069233015398477
+    - 750.0334377263015
+  - - -0.9730209201825024
+    - 0.21079243459761554
+    - 0.09379126044771939
+    - -85.49957263696601
+  - - -0.0258510379145017
+    - 0.3043526813802031
+    - -0.9522085904408205
+    - 855.7665175118836
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  artifacts:
+    base_ply: runtime data/captures artifact omitted from public snapshot
+    preview_xyz: runtime data/captures artifact omitted from public snapshot
+    preview_xyzrgb: runtime data/captures artifact omitted from public snapshot
+- capture_id: capture_0002
+  source_capture_id: capture_0033
+  stationary: true
+  pose_age_ms: 31.000000000858563
+  valid_points: 1749182
+  rgb_available: true
+  source_frame: camera
+  target_frame: base
+  T_base_flange:
+  - - -0.9718081016371088
+    - -0.1983659094041876
+    - -0.12743617845308985
+    - 525.917724609375
+  - - -0.20616090544384633
+    - 0.9771842347722584
+    - 0.05107496822445663
+    - 142.80642700195312
+  - - 0.11439709200434917
+    - 0.07590742584757747
+    - -0.990530851635699
+    - 988.3204345703125
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_flange_camera:
+  - - -0.0121737830341
+    - 0.998221814632
+    - 0.0583527497947
+    - -139.681411743
+  - - -0.998826503754
+    - -0.00940391700715
+    - -0.0475093647838
+    - 57.0793190002
+  - - -0.0468761362135
+    - -0.0588626414537
+    - 0.997164905071
+    - 26.2737922668
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_base_camera:
+  - - 0.2159374243939731
+    - -0.9607134000606752
+    - -0.1743583214425252
+    - 646.9904294877334
+  - - -0.9759219517757055
+    - -0.21799008012468143
+    - -0.007525292162542619
+    - 228.72221708425957
+  - - -0.030778735021145538
+    - 0.17178510800496852
+    - -0.9846535313386293
+    - 950.6490296045562
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  artifacts:
+    base_ply: runtime data/captures artifact omitted from public snapshot
+    preview_xyz: runtime data/captures artifact omitted from public snapshot
+    preview_xyzrgb: runtime data/captures artifact omitted from public snapshot
+- capture_id: capture_0003
+  source_capture_id: capture_0034
+  stationary: true
+  pose_age_ms: 77.99999999951979
+  valid_points: 1748738
+  rgb_available: true
+  source_frame: camera
+  target_frame: base
+  T_base_flange:
+  - - -0.8690641322222498
+    - -0.48244351072984165
+    - -0.10943396657095854
+    - 467.4734802246094
+  - - -0.4880327531947906
+    - 0.8723063906497059
+    - 0.030093066324243085
+    - 311.2119140625
+  - - 0.08094174382789963
+    - 0.07956016456963644
+    - -0.9935384312243543
+    - 886.2013549804688
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_flange_camera:
+  - - -0.0121737830341
+    - 0.998221814632
+    - 0.0583527497947
+    - -139.681411743
+  - - -0.998826503754
+    - -0.00940391700715
+    - -0.0475093647838
+    - 57.0793190002
+  - - -0.0468761362135
+    - -0.0588626414537
+    - 0.997164905071
+    - 26.2737922668
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_base_camera:
+  - - 0.497587004792849
+    - -0.8565403440258145
+    - -0.1369154080115447
+    - 558.4527927554761
+  - - -0.8667521842000859
+    - -0.4971393947697176
+    - -0.03991302603090186
+    - 429.9623317166533
+  - - -0.03387892540752544
+    - 0.13853193366630714
+    - -0.9897783350114854
+    - 853.3325155957551
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  artifacts:
+    base_ply: runtime data/captures artifact omitted from public snapshot
+    preview_xyz: runtime data/captures artifact omitted from public snapshot
+    preview_xyzrgb: runtime data/captures artifact omitted from public snapshot
+- capture_id: capture_0004
+  source_capture_id: capture_0035
+  stationary: true
+  pose_age_ms: 30.999999999039574
+  valid_points: 1775850
+  rgb_available: true
+  source_frame: camera
+  target_frame: base
+  T_base_flange:
+  - - -0.8822164126422551
+    - -0.46140597604999295
+    - 0.09380152733289221
+    - 603.9091796875
+  - - -0.445491901671891
+    - 0.8824719616134974
+    - 0.1509311184308519
+    - 398.4460754394531
+  - - -0.15241773784370374
+    - 0.09136608906689148
+    - -0.9840838739453202
+    - 709.7674560546875
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_flange_camera:
+  - - -0.0121737830341
+    - 0.998221814632
+    - 0.0583527497947
+    - -139.681411743
+  - - -0.998826503754
+    - -0.00940391700715
+    - -0.0475093647838
+    - 57.0793190002
+  - - -0.0468761362135
+    - -0.0588626414537
+    - 0.997164905071
+    - 26.2737922668
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_base_camera:
+  - - 0.46720737589355416
+    - -0.8818300504917136
+    - 0.06397694233631135
+    - 703.266196616112
+  - - -0.883088129991362
+    - -0.46188263188732687
+    - 0.08258185457276415
+    - 515.0094446429737
+  - - -0.0432733211127326
+    - -0.09508013373888785
+    - -0.994528641719603
+    - 710.4168797178731
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  artifacts:
+    base_ply: runtime data/captures artifact omitted from public snapshot
+    preview_xyz: runtime data/captures artifact omitted from public snapshot
+    preview_xyzrgb: runtime data/captures artifact omitted from public snapshot
+- capture_id: capture_0005
+  source_capture_id: capture_0036
+  stationary: true
+  pose_age_ms: 0.0
+  valid_points: 1606209
+  rgb_available: true
+  source_frame: camera
+  target_frame: base
+  T_base_flange:
+  - - -0.9878623507156712
+    - -0.04425501834396271
+    - 0.14889415498898448
+    - 715.8212890625
+  - - -0.029946773267184916
+    - 0.9948335192985793
+    - 0.09700236930553525
+    - 105.19217681884766
+  - - -0.15241773784370383
+    - 0.09136608906689153
+    - -0.9840838739453202
+    - 709.7674560546875
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_flange_camera:
+  - - -0.0121737830341
+    - 0.998221814632
+    - 0.0583527497947
+    - -139.681411743
+  - - -0.998826503754
+    - -0.00940391700715
+    - -0.0475093647838
+    - 57.0793190002
+  - - -0.0468761362135
+    - -0.0588626414537
+    - 0.997164905071
+    - 26.2737922668
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_base_camera:
+  - - 0.04924952448058037
+    - -0.9944538810780422
+    - 0.0929300691523188
+    - 855.1932646067302
+  - - -0.9978486166545599
+    - -0.0449586698891483
+    - 0.04771597324508975
+    - 168.70822428661185
+  - - -0.04327332111273265
+    - -0.09508013373888793
+    - -0.994528641719603
+    - 710.4168797178731
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  artifacts:
+    base_ply: runtime data/captures artifact omitted from public snapshot
+    preview_xyz: runtime data/captures artifact omitted from public snapshot
+    preview_xyzrgb: runtime data/captures artifact omitted from public snapshot
+- capture_id: capture_0006
+  source_capture_id: capture_0037
+  stationary: true
+  pose_age_ms: 46.000000000276486
+  valid_points: 1461407
+  rgb_available: true
+  source_frame: camera
+  target_frame: base
+  T_base_flange:
+  - - -0.8073453121717943
+    - 0.4931554371364688
+    - 0.3240235512072638
+    - 673.81201171875
+  - - 0.4983189044843624
+    - 0.8638976683673083
+    - -0.07320579227788646
+    - -301.7633056640625
+  - - -0.316025024875773
+    - 0.10236470784536264
+    - -0.9432124099268417
+    - 713.4452514648438
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_flange_camera:
+  - - -0.0121737830341
+    - 0.998221814632
+    - 0.0583527497947
+    - -139.681411743
+  - - -0.998826503754
+    - -0.00940391700715
+    - -0.0475093647838
+    - 57.0793190002
+  - - -0.0468761362135
+    - -0.0588626414537
+    - 0.997164905071
+    - 26.2737922668
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  T_base_camera:
+  - - -0.49793724654109117
+    - -0.8296201774704909
+    - 0.252564593123244
+    - 823.2454486739654
+  - - -0.8655187092310987
+    - 0.49361786542700126
+    - -0.08496319801841772
+    - -323.98189692343254
+  - - -0.054183209752805266
+    - -0.260905729117452
+    - -0.9638425246579405
+    - 738.6492139771905
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  artifacts:
+    base_ply: runtime data/captures artifact omitted from public snapshot
+    preview_xyz: runtime data/captures artifact omitted from public snapshot
+    preview_xyzrgb: runtime data/captures artifact omitted from public snapshot
+merge:
+  merged: true
+  timestamp: '2026-08-20T07:15:27.885142+00:00'
+  raw_point_count: 10026462
+  final_point_count: 2069804
+  voxel_size_mm: 2.0
+  statistical_outlier:
+    enabled: true
+    nb_neighbors: 20
+    std_ratio: 2.0
+  icp:
+    enabled: false
+  preview_point_count: 100000
+  preview_xyzrgb_point_count: 100000
+artifacts:
+  merged_raw: runtime data/scans artifact omitted from public snapshot
+  merged_downsampled: runtime data/scans artifact omitted from public snapshot
+  preview_xyz: runtime data/scans artifact omitted from public snapshot
+  preview_xyzrgb: runtime data/scans artifact omitted from public snapshot
+warnings: []
+physical_validation:
+  robot: KUKA KR10 R1100 sixx
+  camera: Zivid Two+ L100
+  eye_in_hand_poses: 10
+  multi_view_captures: 6
+  coordinate_frame: base
+  all_captures_stationary: true
+  physical_rhino_robot_xyz_deviation_mm: approximately 0.10.2 mm
+  deviation_note: Physical reference measurement, not calibration residual.
+  registration_baseline: Robot kinematics + Eye-in-Hand calibration + Base-frame transformation
+  icp: OFF baseline

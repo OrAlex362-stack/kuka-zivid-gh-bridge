@@ -12,6 +12,7 @@ from zivid_camera_manager import ZividCameraManager
 
 def test_open3d_three_plane_pipeline_writes_required_outputs(tmp_path: Path) -> None:
     config = load_config()
+    config["zivid"]["mode"] = "mock"
     config["_config_dir"] = str(tmp_path)
     config["paths"]["captures"] = "captures"
     config["zivid"]["mock_point_count_per_plane"] = 1500

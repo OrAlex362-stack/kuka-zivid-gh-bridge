@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -11,7 +10,7 @@ from storage_utils import atomic_write_via_temp
 from numpy.typing import ArrayLike, NDArray
 
 
-def _finite_points_and_colors(
+def finite_points_and_colors(
     xyz: ArrayLike, rgba: ArrayLike | None
 ) -> tuple[NDArray[np.float32], NDArray[np.uint8] | None]:
     points = np.asarray(xyz).reshape(-1, 3)
@@ -19,12 +18,18 @@ def _finite_points_and_colors(
     finite = points[mask].astype(np.float32, copy=False)
     if rgba is None:
         return finite, None
-    colors = np.asarray(rgba).reshape(-1, np.asarray(rgba).shape[-1])[mask, :3]
+    color_array = np.asarray(rgba)
+    if color_array.ndim < 2 or color_array.shape[-1] < 3:
+        raise ValueError("COLOR_DATA_INVALID: rgba/rgb data must end with at least 3 color channels.")
+    colors_flat = color_array.reshape(-1, color_array.shape[-1])
+    if colors_flat.shape[0] != points.shape[0]:
+        raise ValueError("COLOR_DATA_INVALID: xyz and rgb/rgba point counts do not match.")
+    colors = colors_flat[mask, :3]
     return finite, colors.astype(np.uint8, copy=False)
 
 
 def write_ply(path: Path, xyz: ArrayLike, rgba: ArrayLike | None = None, *, binary: bool = True) -> int:
-    points, colors = _finite_points_and_colors(xyz, rgba)
+    points, colors = finite_points_and_colors(xyz, rgba)
     path.parent.mkdir(parents=True, exist_ok=True)
     color_header = ""
     if colors is not None:
@@ -76,7 +81,53 @@ def write_preview_xyz(path: Path, xyz: ArrayLike, target_count: int) -> int:
         indices = np.linspace(0, len(points) - 1, num=target_count, dtype=np.int64)
         points = points[indices]
     def _write(target: Path) -> None:
-        np.savetxt(target, points, fmt="%.6f %.6f %.6f")
+        with target.open("w", encoding="ascii", newline="\n") as stream:
+            np.savetxt(stream, points, fmt="%.6f %.6f %.6f")
 
     atomic_write_via_temp(path, _write)
     return len(points)
+
+
+def write_preview_xyzrgb(path: Path, xyz: ArrayLike, rgba: ArrayLike, target_count: int) -> int:
+    points, colors = finite_points_and_colors(xyz, rgba)
+    if colors is None:
+        raise ValueError("COLOR_DATA_INVALID: xyzrgb preview requires rgb/rgba data.")
+    if target_count <= 0:
+        raise ValueError("preview target_count must be positive")
+    if len(points) > target_count:
+        indices = np.linspace(0, len(points) - 1, num=target_count, dtype=np.int64)
+        points = points[indices]
+        colors = colors[indices]
+
+    def _write(target: Path) -> None:
+        combined = np.column_stack([points, colors])
+        with target.open("w", encoding="ascii", newline="\n") as stream:
+            np.savetxt(stream, combined, fmt="%.6f %.6f %.6f %d %d %d")
+
+    atomic_write_via_temp(path, _write)
+    return len(points)
+
+
+def read_xyz(path: Path) -> NDArray[np.float32]:
+    data = np.loadtxt(path, dtype=np.float64)
+    if data.size == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    data = np.atleast_2d(data)
+    if data.shape[1] < 3:
+        raise ValueError("XYZ preview must contain at least 3 columns.")
+    return data[:, :3].astype(np.float32)
+
+
+def read_xyzrgb(path: Path) -> tuple[NDArray[np.float32], NDArray[np.uint8]]:
+    data = np.loadtxt(path, dtype=np.float64)
+    if data.size == 0:
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
+    data = np.atleast_2d(data)
+    if data.shape[1] != 6:
+        raise ValueError("XYZRGB preview must contain exactly 6 columns: X Y Z R G B.")
+    rgb = data[:, 3:6]
+    if not np.all(np.isfinite(data[:, :3])):
+        raise ValueError("XYZRGB preview contains non-finite XYZ values.")
+    if not np.all((rgb >= 0) & (rgb <= 255) & (np.rint(rgb) == rgb)):
+        raise ValueError("XYZRGB preview RGB values must be integers in 0..255.")
+    return data[:, :3].astype(np.float32), rgb.astype(np.uint8)

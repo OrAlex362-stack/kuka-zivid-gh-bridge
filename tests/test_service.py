@@ -13,6 +13,7 @@ from robot_udp_server import parse_json_packet
 
 def _test_config(tmp_path: Path) -> dict:
     config = load_config()
+    config["zivid"]["mode"] = "mock"
     config["_config_dir"] = str(tmp_path)
     config["robot_udp"]["port"] = 0
     config["paths"]["calibration_active"] = "calibration/active"
@@ -57,6 +58,15 @@ def test_required_grasshopper_routes_exist(tmp_path) -> None:
         "/calibration/solve",
         "/calibration/reset",
         "/capture",
+        "/scan/start",
+        "/scan/capture",
+        "/scan/status",
+        "/scan/merge",
+        "/scan/finish",
+        "/scan/reset",
+        "/projection/deviation",
+        "/projection/stop",
+        "/projection/status",
         "/wcs/compute",
     }.issubset(paths)
 
@@ -143,3 +153,23 @@ def test_duplicate_capture_request_id_replays_first_result(tmp_path) -> None:
         assert first.json()["capture_id"] == second.json()["capture_id"]
         assert second.json()["idempotent_replay"] is True
         assert len(list((tmp_path / "captures").glob("capture_*"))) == 1
+
+def test_capture_routes_stop_active_projection_before_camera_use(tmp_path) -> None:
+    config = _test_config(tmp_path)
+    app = create_app(config_override=config)
+    stop_reasons = []
+
+    def fake_stop(*, reason: str = "manual"):
+        stop_reasons.append(reason)
+        return {"ok": True, "active": False}
+
+    app.state.projection.stop = fake_stop
+    with TestClient(app) as client:
+        capture_response = client.post("/capture")
+        assert capture_response.status_code == 422
+        assert stop_reasons == ["3d_capture"]
+
+        scan_response = client.post("/scan/capture")
+        assert scan_response.status_code == 409
+        assert stop_reasons == ["3d_capture", "3d_capture"]
+

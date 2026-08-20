@@ -16,7 +16,7 @@ import numpy as np
 
 from bridge_errors import BridgeError
 from config_loader import configured_path
-from pointcloud_io import write_ply, write_preview_xyz
+from pointcloud_io import write_ply, write_preview_xyz, write_preview_xyzrgb
 from robot_udp_server import RobotUDPServer
 from storage_utils import allocate_numbered_directory, atomic_write_yaml, load_yaml, utc_now_iso
 from transform_utils import compose_transforms, matrix_to_list, transform_points, validate_transform
@@ -282,6 +282,23 @@ class PointCloudCapture:
         )
         self._write_manifest(capture_dir, manifest)
 
+    @staticmethod
+    def _diagnostic_details(
+        *,
+        details: dict[str, Any] | None,
+        message: str,
+        stage: str,
+        capture_dir: Path | None,
+        capture_id: str | None,
+    ) -> dict[str, Any]:
+        diagnostic = dict(details or {})
+        diagnostic.setdefault('cause', message)
+        diagnostic['stage'] = stage
+        diagnostic['capture_directory'] = None if capture_dir is None else str(capture_dir)
+        if capture_id is not None:
+            diagnostic.setdefault('capture_id', capture_id)
+        return diagnostic
+
     def _finish_idempotent(self, request_id: str | None, result: dict[str, Any]) -> None:
         if request_id:
             with self._state_lock:
@@ -305,6 +322,7 @@ class PointCloudCapture:
         capture_dir: Path | None = None
         capture_id: str | None = None
         timestamps: dict[str, Any] = {"capture_request_monotonic": time.monotonic()}
+        stage = "validate_calibration"
         try:
             camera_status = self.camera.status()
             T_flange_camera = load_T_flange_camera(
@@ -313,12 +331,15 @@ class PointCloudCapture:
                 camera_serial_number=camera_status.get("serial_number"),
             )
             calibration_hash = _sha256_file(self.result_file)
+            stage = "require_stationary_pose"
             pose_before = self.robot.require_stationary_pose()
             if pose_before.T_base_flange is None:
                 raise BridgeError("NO_VALID_ROBOT_POSE", "No valid T_base_flange is available.")
 
+            stage = "allocate_capture_directory"
             capture_dir = allocate_numbered_directory(self.captures_root, "capture")
             capture_id = capture_dir.name
+            stage = "write_started_manifest"
             self._write_manifest(
                 capture_dir,
                 self._base_manifest(
@@ -330,9 +351,12 @@ class PointCloudCapture:
             )
             LOGGER.info("Production capture %s started at robot seq=%s", capture_id, pose_before.seq)
             timestamps["camera_capture_start_monotonic"] = time.monotonic()
+            stage = "camera_capture"
             frame = self.camera.capture_2d_3d()
             timestamps["camera_capture_end_monotonic"] = time.monotonic()
+            stage = "save_original_zdf"
             original_path = frame.save_original(capture_dir / "original_pointcloud.zdf")
+            stage = "write_captured_manifest"
             self._write_manifest(
                 capture_dir,
                 {
@@ -342,6 +366,7 @@ class PointCloudCapture:
             )
 
             timestamps["post_capture_validation_monotonic"] = time.monotonic()
+            stage = "post_capture_robot_validation"
             pose_after = self.robot.latest_pose()
             if pose_after is None:
                 metadata = self._metadata_base(capture_id, pose_before, None, original_path, timestamps)
@@ -355,7 +380,11 @@ class PointCloudCapture:
                     timestamps=timestamps,
                     error_code="NO_ROBOT_POSE_AFTER_CAPTURE",
                     message="No robot pose was available after camera acquisition.",
-                    extra={"metadata": str(metadata_file)},
+                    extra={
+                        'metadata': str(metadata_file),
+                        'stage': stage,
+                        'capture_directory': str(capture_dir),
+                    },
                 )
                 raise BridgeError(
                     "NO_ROBOT_POSE_AFTER_CAPTURE",
@@ -396,7 +425,12 @@ class PointCloudCapture:
                     timestamps=timestamps,
                     error_code=reason,
                     message="Robot pose history was not stationary for the software acquisition interval.",
-                    extra={"movement": movement, "stationary_during_capture": interval_status.to_dict()},
+                    extra={
+                        'movement': movement,
+                        'stationary_during_capture': interval_status.to_dict(),
+                        'stage': stage,
+                        'capture_directory': str(capture_dir),
+                    },
                 )
                 raise BridgeError(
                     reason,
@@ -410,14 +444,17 @@ class PointCloudCapture:
                 )
 
             # Direction is explicit: p_base = T_base_flange @ T_flange_camera @ p_camera.
+            stage = "compose_camera_transform"
             T_base_camera = compose_transforms(
                 pose_before.T_base_flange,
                 T_flange_camera,
                 target_intermediate_name="T_base_flange",
                 intermediate_source_name="T_flange_camera",
             )
+            stage = "transform_pointcloud"
             xyz_base = transform_points(T_base_camera, frame.xyz)
             ply_path = capture_dir / "transformed_cloud.ply"
+            stage = "write_transformed_ply"
             finite_point_count = write_ply(
                 ply_path,
                 xyz_base,
@@ -425,9 +462,18 @@ class PointCloudCapture:
                 binary=bool(self.config["ply_binary"]),
             )
             preview_path = capture_dir / "preview_cloud.xyz"
+            stage = "write_preview_xyz"
             preview_count = write_preview_xyz(
                 preview_path, xyz_base, int(self.config["preview_point_target"])
             )
+            preview_xyzrgb_path = None
+            preview_xyzrgb_count = None
+            if frame.rgba is not None:
+                preview_xyzrgb_path = capture_dir / "preview_cloud.xyzrgb"
+                stage = "write_preview_xyzrgb"
+                preview_xyzrgb_count = write_preview_xyzrgb(
+                    preview_xyzrgb_path, xyz_base, frame.rgba, int(self.config["preview_point_target"])
+                )
             metadata_file = capture_dir / "pose_capture_info.yaml"
             metadata = self._metadata_base(capture_id, pose_before, pose_after, original_path, timestamps)
             metadata.update(
@@ -440,17 +486,22 @@ class PointCloudCapture:
                     "T_base_camera": matrix_to_list(T_base_camera),
                     "transformed_ply": str(ply_path),
                     "preview_xyz": str(preview_path),
+                    "preview_xyzrgb": None if preview_xyzrgb_path is None else str(preview_xyzrgb_path),
+                    "rgb_available": frame.rgba is not None,
                     "source_point_count": int(np.asarray(frame.xyz).reshape(-1, 3).shape[0]),
                     "finite_transformed_point_count": finite_point_count,
                     "preview_point_count": preview_count,
+                    "preview_xyzrgb_point_count": preview_xyzrgb_count,
                     "camera_mode": self.camera.mode,
                 }
             )
+            stage = "write_capture_metadata"
             atomic_write_yaml(metadata_file, metadata)
             artifacts = {
                 "original_camera_file": _relative_or_string(self.captures_root, original_path),
                 "transformed_ply": _relative_or_string(self.captures_root, ply_path),
                 "preview_xyz": _relative_or_string(self.captures_root, preview_path),
+                "preview_xyzrgb": _relative_or_string(self.captures_root, preview_xyzrgb_path),
                 "metadata": _relative_or_string(self.captures_root, metadata_file),
             }
             manifest = self._base_manifest(
@@ -483,13 +534,16 @@ class PointCloudCapture:
                         "source": int(np.asarray(frame.xyz).reshape(-1, 3).shape[0]),
                         "finite_transformed": finite_point_count,
                         "preview": preview_count,
+                        "preview_xyzrgb": preview_xyzrgb_count,
                     },
                     "artifacts": artifacts,
                     "stationary_during_capture": interval_status.to_dict(),
                 }
             )
+            stage = "write_transformed_manifest"
             self._write_manifest(capture_dir, manifest)
             manifest["state"] = self.COMMITTED
+            stage = "commit_manifest"
             manifest_path = self._write_manifest(capture_dir, manifest)
             with self._state_lock:
                 self._last_capture_id = capture_id
@@ -505,6 +559,7 @@ class PointCloudCapture:
                     "camera": str(original_path),
                     "ply": str(ply_path),
                     "preview_xyz": str(preview_path),
+                    "preview_xyzrgb": None if preview_xyzrgb_path is None else str(preview_xyzrgb_path),
                     "metadata": str(metadata_file),
                     "manifest": str(manifest_path),
                 },
@@ -515,6 +570,14 @@ class PointCloudCapture:
         except BridgeError as exc:
             with self._state_lock:
                 self._last_error = exc.message
+            diagnostic_details = self._diagnostic_details(
+                details=exc.details,
+                message=exc.message,
+                stage=stage,
+                capture_dir=capture_dir,
+                capture_id=capture_id,
+            )
+            exc.details = diagnostic_details
             if capture_dir is not None and capture_id is not None and self._manifest_state(capture_dir) != self.FAILED:
                 self._failure_manifest(
                     capture_dir=capture_dir,
@@ -523,7 +586,7 @@ class PointCloudCapture:
                     timestamps=timestamps,
                     error_code=exc.error_code,
                     message=exc.message,
-                    extra=exc.details,
+                    extra=diagnostic_details,
                 )
             raise
         except Exception as exc:
@@ -537,15 +600,16 @@ class PointCloudCapture:
                     timestamps=timestamps,
                     error_code="CAPTURE_FAILED",
                     message="Production point-cloud capture failed.",
-                    extra={"cause": str(exc)},
+                    extra={"cause": str(exc), "stage": stage},
                 )
-            LOGGER.exception("Production point-cloud capture failed")
+            LOGGER.exception("Production point-cloud capture failed at stage=%s", stage)
             raise BridgeError(
                 "CAPTURE_FAILED",
                 "Production point-cloud capture failed.",
                 status_code=500,
                 details={
                     "cause": str(exc),
+                    "stage": stage,
                     "capture_directory": None if capture_dir is None else str(capture_dir),
                 },
             ) from exc

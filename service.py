@@ -20,7 +20,9 @@ from compute_wcs_pointcloud import WCSPointCloudProcessor
 from config_loader import load_config
 from logging_setup import configure_logging
 from pointcloud_capture import PointCloudCapture
+from projection_service import ProjectionService
 from robot_udp_server import RobotUDPServer
+from scan_session import ScanSessionManager
 from zivid_camera_manager import ZividCameraManager
 
 
@@ -38,6 +40,18 @@ class WCSComputeRequest(BaseModel):
     request_id: str | None = None
 
 
+class DeviationProjectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    points_base: list[list[float]]
+    deviations_mm: list[float]
+    mode: str | None = None
+    good_tolerance_mm: float | None = None
+    warning_tolerance_mm: float | None = None
+    palette: str | None = None
+    point_radius_px: int | None = None
+    opacity: int | None = None
+
+
 def create_app(
     config_path: str | Path = "config.yaml",
     *,
@@ -50,6 +64,8 @@ def create_app(
     calibration = CameraRobotCalibration(config, robot, camera)
     capture = PointCloudCapture(config, robot, camera)
     wcs = WCSPointCloudProcessor(config)
+    scan = ScanSessionManager(config, robot, camera, capture)
+    projection = ProjectionService(config, robot, camera)
     started_monotonic = time.monotonic()
 
     @asynccontextmanager
@@ -77,6 +93,8 @@ def create_app(
     app.state.calibration = calibration
     app.state.capture = capture
     app.state.wcs = wcs
+    app.state.scan = scan
+    app.state.projection = projection
 
     @app.exception_handler(BridgeError)
     async def bridge_error_handler(_request: Request, exc: BridgeError) -> JSONResponse:
@@ -114,6 +132,8 @@ def create_app(
             "calibration": calibration.status(),
             "capture": capture.status(),
             "wcs": wcs.status(),
+            "scan": scan.status(),
+            "projection": projection.status(),
         }
 
     @app.get("/robot/pose")
@@ -142,7 +162,46 @@ def create_app(
 
     @app.post("/capture")
     def production_capture(request_body: CaptureRequest | None = None) -> dict[str, Any]:
+        projection.stop(reason="3d_capture")
         return capture.capture(None if request_body is None else request_body.request_id)
+
+    @app.post("/scan/start")
+    def scan_start() -> dict[str, Any]:
+        return scan.start()
+
+    @app.post("/scan/capture")
+    def scan_capture() -> dict[str, Any]:
+        projection.stop(reason="3d_capture")
+        return scan.capture_once()
+
+    @app.get("/scan/status")
+    def scan_status() -> dict[str, Any]:
+        return scan.status()
+
+    @app.post("/scan/merge")
+    def scan_merge() -> dict[str, Any]:
+        return scan.merge()
+
+    @app.post("/scan/finish")
+    def scan_finish() -> dict[str, Any]:
+        return scan.finish()
+
+    @app.post("/scan/reset")
+    def scan_reset() -> dict[str, Any]:
+        return scan.reset()
+
+
+    @app.post("/projection/deviation")
+    def projection_deviation(request_body: DeviationProjectionRequest) -> dict[str, Any]:
+        return projection.project_deviation(request_body.model_dump(exclude_none=True))
+
+    @app.post("/projection/stop")
+    def projection_stop() -> dict[str, Any]:
+        return projection.stop(reason="manual")
+
+    @app.get("/projection/status")
+    def projection_status() -> dict[str, Any]:
+        return projection.status()
 
     @app.post("/wcs/compute")
     def compute_wcs(request_body: WCSComputeRequest | None = None) -> dict[str, Any]:
