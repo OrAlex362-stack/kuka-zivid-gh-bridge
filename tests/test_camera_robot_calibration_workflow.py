@@ -19,6 +19,7 @@ def _inject_matrix_pose(robot: RobotUDPServer, seq: int, x: float) -> None:
 
 def test_mock_dynamic_calibration_add_solve_and_archive(tmp_path) -> None:
     config = load_config()
+    config["zivid"]["mode"] = "mock"
     config["_config_dir"] = str(tmp_path)
     config["paths"]["calibration_active"] = "calibration/active"
     config["paths"]["calibration_archive"] = "calibration/archive"

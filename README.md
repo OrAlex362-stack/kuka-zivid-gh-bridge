@@ -11,6 +11,64 @@ This repository bridges four parts of an Eye-in-Hand robot-vision workflow:
 
 The Python backend receives actual KUKA pose/state data over UDP, controls Zivid calibration and capture, transforms captured points into robot Base coordinates, and exposes small control/status responses over HTTP. It does not send robot motion commands. Grasshopper is the HTTP client and geometry frontend, not the hardware backend.
 
+
+## 2026-08-20 Physical Validation Milestone
+
+The physical KUKA + Zivid workflow has been validated with the transform chain unchanged:
+
+~~~text
+T_base_camera = T_base_flange @ T_flange_camera
+~~~
+
+This direction is physically validated and must not be inverted, silently redefined, or replaced by an ambiguous transform name. The current registration baseline is:
+
+~~~text
+Robot kinematics
++
+Eye-in-Hand calibration
++
+Base-frame transformation
+=
+Registration baseline
+~~~
+
+Current milestone status:
+
+| Area | Status |
+|---|---|
+| Robot Pose Acquisition | Complete |
+| UDP Pose Streaming / History | Complete |
+| Zivid Hardware Capture | Complete |
+| Eye-in-Hand Calibration | Complete, 10 poses |
+| Camera / Flange / Base Transform | Complete |
+| Physical Base-frame Validation | Complete |
+| Physical Multi-view Scan | Complete, 6 views |
+| Base-frame Merge | Complete |
+| Physical Registration Validation | Complete |
+| Point Cloud / Surface / Mesh | NEXT |
+| Design-to-Scan Deviation Field | NEXT |
+| Timber fitting / fabrication correction | NEXT |
+
+Physical validation baseline:
+
+- Robot: KUKA KR10 R1100 sixx
+- Camera: Zivid Two+ L100
+- Coordinate frame: Robot Base, millimetres
+- Multi-view captures: 6
+- Raw point count: 10,026,462
+- Final merged point count: 2,069,804
+- Voxel size: 2.0 mm
+- Statistical outlier removal: enabled
+- ICP: OFF
+- Physical Rhino / Robot XYZ deviation: approximately 0.10.2 mm
+
+The `0.10.2 mm` physical deviation is a Rhino/robot reference measurement, not a calibration residual. The public documentation snapshot is under `validation/2026-08-20_physical_base_frame/`. Future registration comparisons should explicitly compare:
+
+- A. Robot + Eye-in-Hand only
+- B. Robot + Eye-in-Hand + ICP
+
+The next research focus is Point Cloud -> Surface / Mesh -> Design-to-Scan Deviation Field -> Timber fitting -> Fabrication correction.
+
 ## Architecture
 
 ~~~text
@@ -47,10 +105,10 @@ No transform is silently inverted. Translations and point coordinates are in mil
 
 ## Environment
 
-The verified mock/WCS environment is:
+The verified production target environment is:
 
 - Windows
-- Python 3.10.6
+- Python 3.12.x in a dedicated Conda environment named `kuka-zivid312`
 - Rhino 8 and Grasshopper
 - Zivid SDK 2.18.0
 - Zivid Python wrapper 2.18.0
@@ -58,6 +116,8 @@ The verified mock/WCS environment is:
 - NumPy 2.2.6
 - FastAPI 0.141.1
 - Uvicorn 0.52.1
+
+Do not run the production service from Conda `base` Python 3.13. Open3D 0.19.0 has no Python 3.13 wheel, so `/scan/merge` will report `SCAN_DEPENDENCY_MISSING` in that environment.
 
 The native Zivid SDK is separate system software. pip installs the Python wrapper, not the native SDK. Install Zivid SDK 2.18.0 from Zivid before using a physical camera, and keep the SDK and Python wrapper versions aligned.
 
@@ -70,6 +130,8 @@ kuka_pose.py                       Explicit KUKA A/B/C conversion
 zivid_camera_manager.py            Mock, FileCamera, and hardware capture
 camera_robot_calibration.py        Eye-in-Hand workflow
 pointcloud_capture.py              Base-frame production capture
+scan_session.py                    Multi-view scan session and merge workflow
+projection_service.py              Deviation-map projector service
 compute_wcs_pointcloud.py          Open3D three-plane WCS processing
 config.example.yaml                Shareable mock-safe configuration
 settings/capture_settings.yml      Zivid capture settings
@@ -87,18 +149,14 @@ logs/                              Local rotating logs
 From the repository root in PowerShell:
 
 ~~~powershell
-py -3.10 -m venv .venv
-..venvScriptsActivate.ps1
+conda create -n kuka-zivid312 python=3.12 -y
+conda activate kuka-zivid312
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 Copy-Item config.example.yaml config.yaml
 ~~~
 
-For development and tests, install requirements-dev.txt instead:
-
-~~~powershell
-pip install -r requirements-dev.txt
-~~~
+`requirements-dev.txt` includes the runtime requirements plus pytest/httpx. For a runtime-only install, use `python -m pip install -r requirements.txt`.
 
 config.yaml is local-only and ignored by Git. Review it before connecting hardware. The example starts on localhost, uses UDP port 49152 and HTTP port 8765, and keeps the camera in mock mode.
 
@@ -117,6 +175,7 @@ This utility refuses to run unless zivid.mode is explicitly mock. Its output is 
 Terminal 1:
 
 ~~~powershell
+conda activate kuka-zivid312
 python service.py
 ~~~
 
@@ -140,7 +199,7 @@ Trigger a capture:
 Invoke-RestMethod -Method POST -Uri http://127.0.0.1:8765/capture
 ~~~
 
-With the default mock settings, a capture contains 36,000 source points and a 10,000-point preview. New output is written to the next data/captures/capture_NNNN directory.
+With the default mock settings, a capture contains 36,000 source points and a 10,000-point preview. New output is written to the next data/captures/capture_NNNN directory. If RGB data is available, capture also writes preview_cloud.xyzrgb for colored Grasshopper preview.
 
 Stop the fake sender and service with Ctrl+C in their respective terminals.
 
@@ -154,6 +213,8 @@ http://127.0.0.1:8765
 
 Confirm Robot Status, confirm the Flange Plane, trigger Capture, then load the returned preview_cloud.xyz path. See grasshopper/README.md for the focused frontend workflow.
 
+For multi-view scanning, Grasshopper should act as the HTTP client only: start a scan, trigger one capture at each manually or externally planned robot pose, merge or finish the scan, then load the returned merged_preview.xyzrgb path. The Python backend remains responsible for UDP pose validation, Zivid capture, calibration use, Base-frame transformation, and disk persistence.
+
 ## API
 
 | Method | Endpoint | Purpose |
@@ -165,6 +226,15 @@ Confirm Robot Status, confirm the Flange Plane, trigger Capture, then load the r
 | POST | /calibration/solve | Solve T_flange_camera |
 | POST | /calibration/reset | Archive and reset active calibration data |
 | POST | /capture | Capture and transform a point cloud into Base coordinates |
+| POST | /scan/start | Create a numbered active multi-view scan session |
+| POST | /scan/capture | Add one production-gated Base-frame capture to the active scan |
+| GET | /scan/status | Report active scan id, captures, merge state, and last scan id |
+| POST | /scan/merge | Merge active scan captures into raw, downsampled, and preview outputs |
+| POST | /scan/finish | Merge if needed, finalize scan_manifest.yaml, and close the scan |
+| POST | /scan/reset | Reset only the active in-memory scan; completed scan folders remain on disk |
+| POST | /projection/deviation | Render and start a Zivid projector deviation map from Base-frame points |
+| POST | /projection/stop | Stop the active projector handle; idempotent |
+| GET | /projection/status | Report active projection id, type, image path, and point count |
 | POST | /wcs/compute | Compute workpiece WCS from a selected/latest capture |
 
 Interactive FastAPI schemas are available at http://127.0.0.1:8765/docs while the service is running.
@@ -183,6 +253,8 @@ The modes can be commissioned independently, but mock calibration is rejected ou
 
 - data/calibration/ contains active samples, archives, and calibration_results.yaml.
 - data/captures/ contains numbered capture directories and point-cloud artifacts.
+- data/scans/ contains numbered multi-view scan sessions, per-scan capture records, merged PLY files, previews, and scan_manifest.yaml.
+- data/projections/ contains numbered deviation projection images and projection_manifest.yaml files.
 - logs/ contains the rotating service log.
 
 These locations are ignored by Git because they are machine/cell-specific runtime state and may contain large files or absolute local paths. The application creates the required directories when they are missing. Do not copy a mock calibration into physical production configuration.
@@ -197,7 +269,51 @@ After creating config.yaml and activating the environment:
 python -m pytest -v
 ~~~
 
-The suite covers transform direction, UDP parsing and stationarity, mock Zivid capture, calibration persistence, HTTP routes, disk outputs, and Open3D WCS processing.
+The suite covers transform direction, UDP parsing and stationarity, mock Zivid capture, calibration persistence, HTTP routes, disk outputs, colored XYZRGB preview I/O, multi-view scan sessions, and Open3D WCS processing.
+
+## Multi-view Scan Session
+
+The scan workflow groups multiple already validated production captures into one immutable scan folder. It does not command robot motion. Move planning and robot execution remain outside this backend; the UDP actual pose is still the only authoritative robot-state input.
+
+Typical sequence:
+
+~~~text
+POST /scan/start
+move or jog robot externally
+POST /scan/capture
+move or jog robot externally
+POST /scan/capture
+POST /scan/merge
+POST /scan/finish
+~~~
+
+Each scan capture reuses the same safety and correctness gates as POST /capture: fresh pose, stationary robot, valid calibration, acquisition interval coverage, Base-frame transform, committed disk artifacts. The scan folder stores lightweight scan_capture.yaml records that reference the committed capture artifacts under data/captures/ instead of duplicating large original ZDF/NPZ files.
+
+Merge uses Open3D to combine Base-frame PLY files. Optional voxel downsampling and statistical outlier removal are configured under scan.merge. ICP options are reserved in configuration, but robot/hand-eye alignment is the current merge basis.
+
+Scan outputs include:
+
+- merged_cloud_raw.ply
+- merged_cloud_downsampled.ply
+- merged_preview.xyz
+- merged_preview.xyzrgb when color is available
+- scan_manifest.yaml
+
+## Deviation Projection
+
+Projection maps Grasshopper-computed Base-frame deviation points onto the physical workpiece through the Zivid projector. Grasshopper sends only `points_base`, `deviations_mm`, thresholds, palette, radius, and opacity. It must not open the Zivid camera, send projector pixels, send camera-frame points, or send a BGRA bitmap.
+
+The service uses the current robot pose at projection time, not old scan capture poses:
+
+~~~text
+T_base_camera_current = T_base_flange_current @ T_flange_camera
+T_camera_base = inv(T_base_camera_current)
+P_camera = T_camera_base @ P_base
+~~~
+
+Only then does the backend call `zivid.projection.pixels_from_3d_points(camera, points_camera)`. The projector image is rasterized as BGRA in Python, saved under `data/projections/projection_NNNN/`, and shown through a single retained projection handle. Starting a new projection replaces the previous handle; `/projection/stop` is safe to call repeatedly.
+
+Projection is gated on robot connection, fresh stationary pose, valid non-identity calibration, and camera projection readiness. `/capture` and `/scan/capture` stop active projection before 3D acquisition so service state does not report an image that the camera has already stopped showing.
 
 ## Known Commissioning Items
 
@@ -214,7 +330,7 @@ Commission these items in the guarded physical cell. The Python service receives
 
 ## Detailed Documentation
 
-See docs/KUKA_Zivid_Python_Grasshopper_操作與測試說明.md for the end-to-end operating and verification guide.
+See the operation guide in `docs/` for the end-to-end operating and verification guide.
 
 
 ## UDP Hardening Contract
@@ -330,4 +446,4 @@ Software tests are necessary but not sufficient. Passing software unit tests doe
 7. Verify signed X/Y/Z directions and transformed base-frame fiducial positions.
 8. Only after those checks should captures be used as physical fabrication input.
 
-Future multi-view work should introduce a first-class `ScanSession` grouping multiple committed capture manifests. Registration, planning, and closed-loop fabrication control remain deferred and must not be added to this perception/data backend without a separate design review.
+Multi-view scanning is implemented as a first-class `ScanSession` grouping multiple committed capture manifests. Registration, autonomous planning, robot execution, and closed-loop fabrication control remain deferred and must not be added to this perception/data backend without a separate design review.

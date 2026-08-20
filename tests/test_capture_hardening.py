@@ -18,6 +18,7 @@ from zivid_camera_manager import ZividCameraManager
 
 def _config(tmp_path: Path) -> dict:
     config = load_config()
+    config["zivid"]["mode"] = "mock"
     config["_config_dir"] = str(tmp_path)
     config["robot_udp"]["settle_time_ms"] = 0
     config["robot_udp"]["max_pose_age_ms"] = 5000
@@ -126,3 +127,28 @@ def test_50_synthetic_capture_directories_have_unique_ids(tmp_path: Path) -> Non
     assert len(names) == len(set(names))
     assert names[0] == "capture_0001"
     assert names[-1] == "capture_0050"
+
+
+def test_capture_bridge_error_includes_stage_and_capture_directory(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    robot = RobotUDPServer(config['robot_udp'], config['kuka_pose'])
+    _inject(robot, 1)
+    _write_mock_calibration(tmp_path / 'calibration_results.yaml')
+    camera = ZividCameraManager(config)
+    camera.connect()
+
+    with pytest.raises(Exception) as error:
+        PointCloudCapture(config, robot, camera).capture('blocked-gh-solution')
+
+    assert error.value.error_code == 'ROBOT_POSE_COVERAGE_INSUFFICIENT'
+    details = error.value.details
+    assert details['stage'] == 'post_capture_robot_validation'
+    assert details['capture_directory'].endswith('capture_0001')
+    assert details['capture_id'] == 'capture_0001'
+    assert details['stationary_during_capture']['coverage_sufficient'] is False
+
+    manifest = load_yaml(tmp_path / 'captures' / 'capture_0001' / 'capture_manifest.yaml')
+    assert manifest['state'] == 'FAILED'
+    manifest_details = manifest['errors'][0]['details']
+    assert manifest_details['stage'] == 'post_capture_robot_validation'
+    assert manifest_details['capture_directory'].endswith('capture_0001')

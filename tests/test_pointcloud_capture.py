@@ -14,6 +14,7 @@ from zivid_camera_manager import ZividCameraManager
 
 def test_mock_capture_writes_disk_artifacts_without_raw_http_payload(tmp_path) -> None:
     config = load_config()
+    config["zivid"]["mode"] = "mock"
     config["_config_dir"] = str(tmp_path)
     config["paths"]["captures"] = "captures"
     config["paths"]["calibration_result"] = "calibration_results.yaml"

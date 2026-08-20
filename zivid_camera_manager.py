@@ -15,24 +15,49 @@ from numpy.typing import NDArray
 
 from bridge_errors import BridgeError
 from config_loader import resolve_path
-from storage_utils import atomic_write_via_temp
+from storage_utils import atomic_write_via_ascii_staging, atomic_write_via_temp
 from transform_utils import validate_transform
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _metadata_value(obj: Any, *names: str) -> str | None:
+def _metadata_value(obj, *names):
+    """
+    Safely read metadata from Zivid SDK objects.
+
+    Important:
+    - Do not use ``value not in (None, "")`` because some Zivid SDK
+      objects implement ``__eq__`` and may raise when compared to None.
+    - Return human-readable strings for status/logging only.
+    """
+
+    if obj is None:
+        return None
+
     for name in names:
-        candidate = getattr(obj, name, None)
-        if candidate is None:
-            continue
         try:
-            value = candidate() if callable(candidate) else candidate
+            value = getattr(obj, name)
+        except (AttributeError, RuntimeError):
+            continue
+
+        if value is None:
+            continue
+
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+            return value
+
+        try:
+            text = str(value).strip()
         except Exception:
             continue
-        if value not in (None, ""):
-            return str(value)
+
+        if text:
+            return text
+
     return None
 
 
@@ -55,7 +80,11 @@ class CapturedFrame:
             def _write_zdf(target: Path) -> None:
                 self.native_frame.save(str(target))
 
-            atomic_write_via_temp(requested_zdf_path, _write_zdf)
+            # Zivid's native Windows file API can fail on non-ASCII project
+            # paths. Let the SDK write to an ASCII-only staging filename, then
+            # let Python copy/atomically commit the binary ZDF to the requested
+            # Unicode destination.
+            atomic_write_via_ascii_staging(requested_zdf_path, _write_zdf)
             return requested_zdf_path
 
         mock_path = requested_zdf_path.with_suffix(".mock.npz")
@@ -157,17 +186,36 @@ class ZividCameraManager:
                     if file_camera_settings is not None
                     else configured_settings
                 )
+                # Camera metadata lives on camera.info in Zivid Python 2.18.
+                # Read metadata only after the camera and settings are ready.
+                camera_info = getattr(self._camera, "info", None)
+
+                self._camera_serial_number = _metadata_value(
+                    camera_info,
+                    "serial_number",
+                    "serialNumber",
+                )
+                self._camera_model = _metadata_value(
+                    camera_info,
+                    "model_name",
+                    "model",
+                )
+
                 self._connected = True
-                self._camera_serial_number = _metadata_value(self._camera, "serial_number", "serialNumber")
-                self._camera_model = _metadata_value(self._camera, "model_name", "model", "info")
                 self._last_error = None
-                LOGGER.info("Connected Zivid camera in %s mode", self.mode)
+
+                LOGGER.info(
+                    "Connected Zivid camera in %s mode: model=%s serial=%s",
+                    self.mode,
+                    self._camera_model or "UNKNOWN",
+                    self._camera_serial_number or "UNKNOWN",
+                )
                 return True
             except Exception as exc:
                 self._connected = False
                 self._camera = None
                 self._last_error = str(exc)
-                LOGGER.exception("Unable to connect Zivid camera")
+                LOGGER.exception("Unable to initialize Zivid camera")
                 return False
 
     def close(self) -> None:
@@ -262,6 +310,31 @@ class ZividCameraManager:
                 ) from exc
             finally:
                 self._busy = False
+
+    def projection_resources(self) -> tuple[Any, Any]:
+        """Return the official Zivid projection namespace and connected camera.
+
+        Projection must use the same camera owner as capture. The handle lifetime
+        is managed by ProjectionService, but access to the underlying camera is
+        serialized through this manager's lock.
+        """
+        with self._lock:
+            if not self._connected or self._camera is None:
+                raise BridgeError(
+                    "CAMERA_UNAVAILABLE",
+                    "No connected Zivid camera is available for projection.",
+                    status_code=503,
+                    details=self.status(),
+                )
+            zivid = self._import_zivid()
+            projection = getattr(zivid, "projection", None)
+            if projection is None:
+                raise BridgeError(
+                    "CAMERA_PROJECTION_UNAVAILABLE",
+                    "The installed Zivid SDK wrapper does not expose zivid.projection.",
+                    status_code=503,
+                )
+            return projection, self._camera
 
     def detect_calibration_board(self, frame: CapturedFrame) -> Any:
         if frame.mock:

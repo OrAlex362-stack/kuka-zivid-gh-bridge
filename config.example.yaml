@@ -77,10 +77,38 @@ wcs:
     height: z
     length: y
 
+scan:
+  enabled: true
+  merge:
+    voxel_size_mm: 2.0
+    remove_statistical_outlier:
+      enabled: true
+      nb_neighbors: 20
+      std_ratio: 2.0
+    icp:
+      enabled: false
+      max_correspondence_distance_mm: 5.0
+      max_iterations: 50
+  preview:
+    max_points: 100000
+
+projection:
+  enabled: true
+  deviation:
+    mode: absolute
+    good_tolerance_mm: 1.0
+    warning_tolerance_mm: 3.0
+    palette: pure_rgb
+    point_radius_px: 3
+    max_points: 20000
+  require_robot_stationary: true
+  require_fresh_pose: true
 paths:
   data_root: data
   calibration_active: data/calibration/active
   calibration_archive: data/calibration/archive
   calibration_result: data/calibration/calibration_results.yaml
   captures: data/captures
+  scans: data/scans
+  projections: data/projections
   service_log: logs/service.log
