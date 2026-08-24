@@ -1,4 +1,4 @@
-# KUKA Zivid Grasshopper Bridge
+# TACO Zivid Grasshopper Bridge
 
 ## Purpose
 
