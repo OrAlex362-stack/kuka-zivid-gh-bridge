@@ -11,10 +11,12 @@ This repository bridges four parts of an Eye-in-Hand robot-vision workflow:
 
 The Python backend receives actual KUKA pose/state data over UDP, controls Zivid calibration and capture, transforms captured points into robot Base coordinates, and exposes small control/status responses over HTTP. It does not send robot motion commands. Grasshopper is the HTTP client and geometry frontend, not the hardware backend.
 
+https://www.food4rhino.com/en/app/taco-abb
+
 ## Architecture
 
 ~~~text
-KUKA / Fake Robot
+TACO / Fake Robot
         |
         | UDP actual pose/state
         v
@@ -65,7 +67,7 @@ The native Zivid SDK is separate system software. pip installs the Python wrappe
 
 ~~~text
 service.py                         FastAPI entry point
-robot_udp_server.py                KUKA/fake-robot UDP receiver
+robot_udp_server.py                TACO/fake-robot UDP receiver
 kuka_pose.py                       Explicit KUKA A/B/C conversion
 zivid_camera_manager.py            Mock, FileCamera, and hardware capture
 camera_robot_calibration.py        Eye-in-Hand workflow
