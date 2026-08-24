@@ -13,6 +13,7 @@ from bridge_errors import BridgeError
 from config_loader import configured_path
 from pointcloud_capture import PointCloudCapture
 from pointcloud_io import write_preview_xyz, write_preview_xyzrgb
+from pointcloud_registration import ICPConfig, IDENTITY_TRANSFORM, register_point_to_plane
 from robot_udp_server import RobotUDPServer
 from storage_utils import allocate_numbered_directory, atomic_write_yaml, load_yaml, utc_now_iso
 from transform_utils import matrix_to_list, validate_transform
@@ -259,6 +260,153 @@ class ScanSessionManager:
             )
         return points, np.clip(np.rint(colors * 255.0), 0, 255).astype(np.uint8)
 
+    @staticmethod
+    def _cloud_from_arrays(o3d: Any, points: np.ndarray, colors: np.ndarray | None) -> Any:
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(points.astype(np.float64, copy=False))
+        if colors is not None:
+            cloud.colors = o3d.utility.Vector3dVector(colors.astype(np.float64) / 255.0)
+        return cloud
+
+    @staticmethod
+    def _combined_cloud_arrays(clouds: list[Any]) -> tuple[np.ndarray, np.ndarray | None]:
+        xyz_parts: list[np.ndarray] = []
+        rgb_parts: list[np.ndarray] = []
+        any_color = False
+        any_uncolored = False
+        for cloud in clouds:
+            points = np.asarray(cloud.points, dtype=np.float64).reshape(-1, 3)
+            colors = np.asarray(cloud.colors, dtype=np.float64)
+            xyz_parts.append(points)
+            if colors.size:
+                any_color = True
+                rgb_parts.append(np.clip(np.rint(colors.reshape(-1, 3) * 255.0), 0, 255).astype(np.uint8))
+            else:
+                any_uncolored = True
+        if any_color and any_uncolored:
+            raise BridgeError("COLOR_DATA_INVALID", "Cannot merge mixed colored and uncolored captures.", status_code=422)
+        merged_xyz = np.concatenate(xyz_parts, axis=0) if xyz_parts else np.empty((0, 3), dtype=np.float64)
+        merged_rgb = np.concatenate(rgb_parts, axis=0) if any_color else None
+        return merged_xyz, merged_rgb
+
+    def _load_base_clouds(self, o3d: Any, captures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        loaded: list[dict[str, Any]] = []
+        saw_colored = False
+        saw_uncolored = False
+        for record in captures:
+            points, colors = self._cloud_arrays(o3d, Path(record["artifacts"]["base_ply"]))
+            finite_mask = np.all(np.isfinite(points), axis=1)
+            points = points[finite_mask]
+            if colors is not None:
+                colors = colors[finite_mask]
+                saw_colored = True
+            else:
+                saw_uncolored = True
+            if saw_colored and saw_uncolored:
+                raise BridgeError("COLOR_DATA_INVALID", "Cannot merge mixed colored and uncolored captures.", status_code=422)
+            loaded.append({"record": record, "cloud": self._cloud_from_arrays(o3d, points, colors)})
+        return loaded
+
+    def _write_open3d_cloud(self, o3d: Any, path: Path, cloud: Any) -> None:
+        if not o3d.io.write_point_cloud(str(path), cloud, write_ascii=False):
+            raise IOError(f"Open3D failed to write {path}")
+
+    def _apply_icp_refinement(
+        self,
+        o3d: Any,
+        *,
+        scan_id: str,
+        loaded: list[dict[str, Any]],
+        icp_config: ICPConfig,
+    ) -> tuple[list[Any], dict[str, Any], list[str]]:
+        refined_clouds: list[Any] = []
+        diagnostics: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        anchor = loaded[0]
+        anchor_id = anchor["record"]["capture_id"]
+        anchor_cloud = o3d.geometry.PointCloud(anchor["cloud"])
+        refined_clouds.append(anchor_cloud)
+        reference_cloud = o3d.geometry.PointCloud(anchor_cloud)
+        diagnostics.append(
+            {
+                "capture_id": anchor_id,
+                "role": "anchor",
+                "accepted": True,
+                "reason": None,
+                "source_point_count": int(len(anchor_cloud.points)),
+                "target_point_count": 0,
+                "source_registration_point_count": 0,
+                "target_registration_point_count": 0,
+                "delta_transform": IDENTITY_TRANSFORM.tolist(),
+            }
+        )
+        for item in loaded[1:]:
+            record = item["record"]
+            source_id = record["capture_id"]
+            source_cloud = o3d.geometry.PointCloud(item["cloud"])
+            LOGGER.info(
+                "ICP START scan_id=%s source_capture=%s target_points=%d source_points=%d",
+                scan_id,
+                source_id,
+                len(reference_cloud.points),
+                len(source_cloud.points),
+            )
+            result = register_point_to_plane(o3d, source_cloud, reference_cloud, icp_config)
+            applied_cloud = o3d.geometry.PointCloud(source_cloud)
+            if result.accepted:
+                applied_cloud.transform(result.delta_transform)
+            else:
+                warning = f"ICP rejected for {source_id}: {result.reason}; initial Base-frame alignment was used."
+                warnings.append(warning)
+                LOGGER.warning(
+                    "ICP REJECTED scan_id=%s source_capture=%s reason=%s",
+                    scan_id,
+                    source_id,
+                    result.reason,
+                )
+            LOGGER.info(
+                "ICP RESULT scan_id=%s source_capture=%s fitness=%s rmse_mm=%s translation_mm=%s rotation_deg=%s accepted=%s",
+                scan_id,
+                source_id,
+                result.fitness,
+                result.inlier_rmse_mm,
+                result.translation_correction_mm,
+                result.rotation_correction_deg,
+                result.accepted,
+            )
+            diagnostics.append(result.to_manifest(capture_id=source_id))
+            refined_clouds.append(applied_cloud)
+            reference_cloud += applied_cloud
+        accepted_count = sum(1 for item in diagnostics if item.get("accepted") is True)
+        rejected_count = sum(1 for item in diagnostics if item.get("accepted") is False)
+        payload = {
+            "enabled": True,
+            "method": icp_config.method,
+            "anchor_capture": anchor_id,
+            "failure_policy": icp_config.failure_policy,
+            "accepted_count": int(accepted_count),
+            "rejected_count": int(rejected_count),
+            "units": {
+                "point_coordinates": "mm",
+                "inlier_rmse": "mm",
+                "translation_correction": "mm",
+                "rotation_correction": "degrees",
+            },
+            "thresholds": {
+                "voxel_size_mm": icp_config.voxel_size_mm,
+                "max_correspondence_distance_mm": icp_config.max_correspondence_distance_mm,
+                "max_iterations": icp_config.max_iterations,
+                "normal_radius_mm": icp_config.normal_radius_mm,
+                "normal_max_nn": icp_config.normal_max_nn,
+                "min_fitness": icp_config.min_fitness,
+                "max_inlier_rmse_mm": icp_config.max_inlier_rmse_mm,
+                "max_translation_correction_mm": icp_config.max_translation_correction_mm,
+                "max_rotation_correction_deg": icp_config.max_rotation_correction_deg,
+            },
+            "captures": diagnostics,
+        }
+        return refined_clouds, payload, warnings
+
     def _merge_active_locked(self, o3d: Any) -> dict[str, Any]:
         if self._active is None:
             raise BridgeError("SCAN_NOT_ACTIVE", "Start a scan before merging.", status_code=409)
@@ -267,34 +415,49 @@ class ScanSessionManager:
             raise BridgeError("SCAN_EMPTY", "The active scan has no captures to merge.", status_code=422)
         scan_dir = Path(self._active["scan_dir"])
         merge_config = self.config["merge"]
-        if bool(merge_config.get("icp", {}).get("enabled", False)):
-            self._active.setdefault("warnings", []).append("ICP requested but not implemented; robot/hand-eye alignment was used.")
-
-        xyz_parts: list[np.ndarray] = []
-        rgb_parts: list[np.ndarray] = []
-        any_color = False
-        for record in captures:
-            points, colors = self._cloud_arrays(o3d, Path(record["artifacts"]["base_ply"]))
-            xyz_parts.append(points)
-            if colors is not None:
-                any_color = True
-                rgb_parts.append(colors)
-            elif any_color:
-                raise BridgeError("COLOR_DATA_INVALID", "Cannot merge mixed colored and uncolored captures.", status_code=422)
-        merged_xyz = np.concatenate(xyz_parts, axis=0)
-        merged_rgb = np.concatenate(rgb_parts, axis=0) if any_color else None
-        finite_mask = np.all(np.isfinite(merged_xyz), axis=1)
-        merged_xyz = merged_xyz[finite_mask]
-        if merged_rgb is not None:
-            merged_rgb = merged_rgb[finite_mask]
+        icp_config = ICPConfig.from_mapping(merge_config.get("icp", {}))
+        loaded = self._load_base_clouds(o3d, captures)
+        initial_clouds = [o3d.geometry.PointCloud(item["cloud"]) for item in loaded]
+        preview_limit = int(self.config.get("preview", {}).get("max_points", 100000))
+        pre_icp_path = None
+        pre_icp_preview_xyz_path = None
+        pre_icp_preview_xyzrgb_path = None
+        pre_icp_preview_xyz_count = None
+        pre_icp_preview_xyzrgb_count = None
+        if icp_config.enabled:
+            pre_icp_cloud = o3d.geometry.PointCloud()
+            for cloud in initial_clouds:
+                pre_icp_cloud += cloud
+            pre_icp_path = scan_dir / "merged_cloud_pre_icp.ply"
+            self._write_open3d_cloud(o3d, pre_icp_path, pre_icp_cloud)
+            pre_icp_xyz, pre_icp_rgb = self._combined_cloud_arrays(initial_clouds)
+            pre_icp_preview_xyz_path = scan_dir / "merged_pre_icp_preview.xyz"
+            pre_icp_preview_xyz_count = write_preview_xyz(pre_icp_preview_xyz_path, pre_icp_xyz, preview_limit)
+            if pre_icp_rgb is not None:
+                pre_icp_preview_xyzrgb_path = scan_dir / "merged_pre_icp_preview.xyzrgb"
+                pre_icp_preview_xyzrgb_count = write_preview_xyzrgb(
+                    pre_icp_preview_xyzrgb_path,
+                    pre_icp_xyz,
+                    pre_icp_rgb,
+                    preview_limit,
+                )
+            refined_clouds, icp_payload, icp_warnings = self._apply_icp_refinement(
+                o3d,
+                scan_id=self._active["scan_id"],
+                loaded=loaded,
+                icp_config=icp_config,
+            )
+            self._active.setdefault("warnings", []).extend(icp_warnings)
+        else:
+            refined_clouds = initial_clouds
+            icp_payload = {"enabled": False}
 
         raw_cloud = o3d.geometry.PointCloud()
-        raw_cloud.points = o3d.utility.Vector3dVector(merged_xyz.astype(np.float64, copy=False))
-        if merged_rgb is not None:
-            raw_cloud.colors = o3d.utility.Vector3dVector(merged_rgb.astype(np.float64) / 255.0)
+        for cloud in refined_clouds:
+            raw_cloud += cloud
+        merged_xyz, merged_rgb = self._combined_cloud_arrays(refined_clouds)
         raw_path = scan_dir / "merged_cloud_raw.ply"
-        if not o3d.io.write_point_cloud(str(raw_path), raw_cloud, write_ascii=False):
-            raise IOError(f"Open3D failed to write {raw_path}")
+        self._write_open3d_cloud(o3d, raw_path, raw_cloud)
 
         voxel_size = float(merge_config.get("voxel_size_mm", 0.0))
         working = raw_cloud.voxel_down_sample(voxel_size) if voxel_size > 0 else raw_cloud
@@ -305,12 +468,10 @@ class ScanSessionManager:
                 std_ratio=float(outlier_config.get("std_ratio", 2.0)),
             )
         downsampled_path = scan_dir / "merged_cloud_downsampled.ply"
-        if not o3d.io.write_point_cloud(str(downsampled_path), working, write_ascii=False):
-            raise IOError(f"Open3D failed to write {downsampled_path}")
+        self._write_open3d_cloud(o3d, downsampled_path, working)
 
         final_xyz = np.asarray(working.points, dtype=np.float64)
         final_colors = np.asarray(working.colors, dtype=np.float64)
-        preview_limit = int(self.config.get("preview", {}).get("max_points", 100000))
         preview_xyz_path = scan_dir / "merged_preview.xyz"
         preview_xyz_count = write_preview_xyz(preview_xyz_path, final_xyz, preview_limit)
         preview_xyzrgb_path = None
@@ -331,16 +492,22 @@ class ScanSessionManager:
                 "nb_neighbors": int(outlier_config.get("nb_neighbors", 20)),
                 "std_ratio": float(outlier_config.get("std_ratio", 2.0)),
             },
-            "icp": {"enabled": bool(merge_config.get("icp", {}).get("enabled", False))},
+            "icp": icp_payload,
             "preview_point_count": preview_xyz_count,
             "preview_xyzrgb_point_count": preview_xyzrgb_count,
+            "pre_icp_preview_point_count": pre_icp_preview_xyz_count,
+            "pre_icp_preview_xyzrgb_point_count": pre_icp_preview_xyzrgb_count,
         }
         artifacts = {
             "merged_raw": str(raw_path),
             "merged_downsampled": str(downsampled_path),
+            "pre_icp_preview_xyz": None if pre_icp_preview_xyz_path is None else str(pre_icp_preview_xyz_path),
+            "pre_icp_preview_xyzrgb": None if pre_icp_preview_xyzrgb_path is None else str(pre_icp_preview_xyzrgb_path),
             "preview_xyz": str(preview_xyz_path),
             "preview_xyzrgb": None if preview_xyzrgb_path is None else str(preview_xyzrgb_path),
         }
+        if pre_icp_path is not None:
+            artifacts["merged_pre_icp"] = str(pre_icp_path)
         self._active["merge"] = merge_payload
         self._active["artifacts"] = artifacts
         self._write_manifest(self._active)

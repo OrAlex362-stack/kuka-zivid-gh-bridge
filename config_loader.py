@@ -31,8 +31,17 @@ DEFAULT_SCAN_CONFIG: dict[str, Any] = {
         },
         "icp": {
             "enabled": False,
+            "method": "point_to_plane",
+            "voxel_size_mm": 2.0,
             "max_correspondence_distance_mm": 5.0,
             "max_iterations": 50,
+            "normal_radius_mm": 8.0,
+            "normal_max_nn": 30,
+            "min_fitness": 0.30,
+            "max_inlier_rmse_mm": 3.0,
+            "max_translation_correction_mm": 5.0,
+            "max_rotation_correction_deg": 1.0,
+            "failure_policy": "use_initial_alignment",
         },
     },
     "preview": {
@@ -98,8 +107,21 @@ def _validate_scan_config(config: dict[str, Any]) -> None:
     icp = merge["icp"]
     if not isinstance(icp.get("enabled"), bool):
         raise ValueError("scan.merge.icp.enabled must be a boolean.")
+    if str(icp["method"]).lower() != "point_to_plane":
+        raise ValueError("scan.merge.icp.method must be point_to_plane.")
+    _positive_float(icp["voxel_size_mm"], name="scan.merge.icp.voxel_size_mm", allow_zero=True)
     _positive_float(icp["max_correspondence_distance_mm"], name="scan.merge.icp.max_correspondence_distance_mm")
     _positive_int(icp["max_iterations"], name="scan.merge.icp.max_iterations")
+    _positive_float(icp["normal_radius_mm"], name="scan.merge.icp.normal_radius_mm")
+    _positive_int(icp["normal_max_nn"], name="scan.merge.icp.normal_max_nn")
+    _positive_float(icp["min_fitness"], name="scan.merge.icp.min_fitness", allow_zero=True)
+    if float(icp["min_fitness"]) > 1.0:
+        raise ValueError("scan.merge.icp.min_fitness must be between 0 and 1.")
+    _positive_float(icp["max_inlier_rmse_mm"], name="scan.merge.icp.max_inlier_rmse_mm")
+    _positive_float(icp["max_translation_correction_mm"], name="scan.merge.icp.max_translation_correction_mm")
+    _positive_float(icp["max_rotation_correction_deg"], name="scan.merge.icp.max_rotation_correction_deg")
+    if str(icp["failure_policy"]) != "use_initial_alignment":
+        raise ValueError("scan.merge.icp.failure_policy must be use_initial_alignment.")
     _positive_int(scan["preview"]["max_points"], name="scan.preview.max_points")
 
 

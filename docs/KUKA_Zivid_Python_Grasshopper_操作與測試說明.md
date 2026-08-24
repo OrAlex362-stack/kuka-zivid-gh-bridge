@@ -267,9 +267,9 @@ P_base_02
 POST /scan/merge
 
 Concatenate Base-frame clouds
+Optional bounded Point-to-Plane ICP refinement
 Voxel Downsample
 Statistical Outlier Removal
-Optional ICP Refinement (configured off by default)
 Colored merged cloud
 merged_preview.xyzrgb
 Grasshopper Colored PointCloud
@@ -315,13 +315,14 @@ data/scans/
       capture_0002/
         scan_capture.yaml
     merged_cloud_raw.ply
+    merged_cloud_pre_icp.ply   # only when ICP is enabled
     merged_cloud_downsampled.ply
     merged_preview.xyz
     merged_preview.xyzrgb
     scan_manifest.yaml
 ```
 
-Each `scan_capture.yaml` references the committed single-capture artifacts under `data/captures/capture_NNNN/`. Large original ZDF/NPZ files are not duplicated into the scan folder. The scan manifest records `T_base_flange`, `T_flange_camera`, `T_base_camera`, pose age, stationarity, point counts, RGB availability, merge parameters, and output artifact paths.
+Each `scan_capture.yaml` references the committed single-capture artifacts under `data/captures/capture_NNNN/`. Large original ZDF/NPZ files are not duplicated into the scan folder. The scan manifest records `T_base_flange`, `T_flange_camera`, `T_base_camera`, pose age, stationarity, point counts, RGB availability, merge parameters, ICP diagnostics when enabled, and output artifact paths.
 
 Colored preview files:
 
@@ -343,13 +344,24 @@ scan:
       std_ratio: 2.0
     icp:
       enabled: false
+      method: point_to_plane
+      voxel_size_mm: 2.0
       max_correspondence_distance_mm: 5.0
       max_iterations: 50
+      normal_radius_mm: 8.0
+      normal_max_nn: 30
+      min_fitness: 0.30
+      max_inlier_rmse_mm: 3.0
+      max_translation_correction_mm: 5.0
+      max_rotation_correction_deg: 1.0
+      failure_policy: use_initial_alignment
   preview:
     max_points: 100000
 ```
 
-ICP is not the registration source. Robot UDP `T_base_flange` plus fixed Eye-in-Hand `T_flange_camera` is the global registration. ICP is reserved for future small residual refinement and is disabled by default.
+ICP is not the registration source. Robot UDP `T_base_flange` plus fixed Eye-in-Hand `T_flange_camera` is the global registration, and `base_ply` files are already approximately aligned in Robot Base frame. ICP starts from identity, estimates normals only on downsampled registration clouds, and applies an accepted `Delta T` only to the original source cloud for that capture.
+
+ICP is bounded by fitness, RMSE, translation, rotation, finite-transform, and point-count checks. With `failure_policy: use_initial_alignment`, rejected ICP corrections do not abort a scan; the original robot/hand-eye Base-frame alignment is merged and the manifest records the rejection reason and metrics. ICP improves multi-view registration consistency only. It does not improve Zivid sensor depth accuracy or certify physical frame semantics.
 
 Grasshopper usage:
 
@@ -655,4 +667,3 @@ Software tests do not certify physical projector alignment, KUKA safety, real Zi
 - `CAMERA_PROJECTION_UNAVAILABLE`: the installed Zivid wrapper does not expose `zivid.projection`.
 - `PROJECTION_INPUT_LENGTH_MISMATCH`: `points_base` and `deviations_mm` lengths differ.
 - `PROJECTION_NO_VALID_POINTS`: all rows were non-finite or invalid after filtering.
-

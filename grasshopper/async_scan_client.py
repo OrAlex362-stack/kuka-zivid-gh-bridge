@@ -10,7 +10,10 @@ GhPython inputs:
     clear          optional rising edge clears displayed state while idle
 
 GhPython outputs:
-    busy, ok, action, errorCode, httpStatus, response, details, previewPath, captureCount
+    busy, ok, action, errorCode, httpStatus, response, details, previewPath, captureCount,
+    preICPPreviewPath, postICPPreviewPath,
+    icpEnabled, icpAcceptedCount, icpRejectedCount,
+    icpFitness, icpRMSE, icpTranslation, icpRotation
 """
 
 from __future__ import annotations
@@ -75,6 +78,15 @@ def _initial_state():
         'response': None,
         'details': None,
         'previewPath': None,
+        'preICPPreviewPath': None,
+        'postICPPreviewPath': None,
+        'icpEnabled': False,
+        'icpAcceptedCount': 0,
+        'icpRejectedCount': 0,
+        'icpFitness': None,
+        'icpRMSE': None,
+        'icpTranslation': None,
+        'icpRotation': None,
         'captureCount': 0,
         'thread': None,
         'previous_clear': False,
@@ -99,15 +111,59 @@ def _preview_from_payload(payload):
     return files.get('preview_xyzrgb') or files.get('preview_xyz')
 
 
+def _pre_icp_preview_from_payload(payload):
+    if not isinstance(payload, dict):
+        return None
+    files = payload.get('files')
+    if not isinstance(files, dict):
+        return None
+    return files.get('pre_icp_preview_xyzrgb') or files.get('pre_icp_preview_xyz')
+
+
+def _icp_from_payload(payload):
+    if not isinstance(payload, dict):
+        return {}
+    merge = payload.get('merge')
+    if not isinstance(merge, dict):
+        return {}
+    icp = merge.get('icp')
+    return icp if isinstance(icp, dict) else {}
+
+
+def _latest_registration(icp):
+    captures = icp.get('captures') if isinstance(icp, dict) else None
+    if not isinstance(captures, list):
+        return {}
+    latest = {}
+    for item in captures:
+        if not isinstance(item, dict):
+            continue
+        if item.get('role') == 'anchor':
+            continue
+        latest = item
+    return latest
+
+
 def _worker(state, base_url, action_name, endpoint):
     try:
         status, payload = _post_json(base_url.rstrip('/') + endpoint)
+        icp = _icp_from_payload(payload)
+        latest_icp = _latest_registration(icp)
         state['httpStatus'] = status
         state['response'] = payload
         state['details'] = payload.get('details') if isinstance(payload, dict) else None
         state['ok'] = bool(isinstance(payload, dict) and payload.get('ok') is True and status < 400)
         state['errorCode'] = None if state['ok'] else parse_error(payload)
-        state['previewPath'] = _preview_from_payload(payload)
+        state['preICPPreviewPath'] = _pre_icp_preview_from_payload(payload)
+        state['postICPPreviewPath'] = _preview_from_payload(payload)
+        state['previewPath'] = state['postICPPreviewPath']
+        state['icpEnabled'] = bool(icp.get('enabled', False)) if isinstance(icp, dict) else False
+        state['icpAcceptedCount'] = int(icp.get('accepted_count') or 0) if isinstance(icp, dict) else 0
+        state['icpRejectedCount'] = int(icp.get('rejected_count') or 0) if isinstance(icp, dict) else 0
+        state['icpFitness'] = latest_icp.get('fitness')
+        state['icpRMSE'] = latest_icp.get('inlier_rmse_mm')
+        state['icpTranslation'] = latest_icp.get('translation_correction_mm')
+        state['icpRotation'] = latest_icp.get('rotation_correction_deg')
         if isinstance(payload, dict) and payload.get('capture_count') is not None:
             state['captureCount'] = int(payload.get('capture_count'))
     except Exception as exc:
@@ -117,6 +173,15 @@ def _worker(state, base_url, action_name, endpoint):
         state['ok'] = False
         state['errorCode'] = 'HTTP_WORKER_FAILED'
         state['previewPath'] = None
+        state['preICPPreviewPath'] = None
+        state['postICPPreviewPath'] = None
+        state['icpEnabled'] = False
+        state['icpAcceptedCount'] = 0
+        state['icpRejectedCount'] = 0
+        state['icpFitness'] = None
+        state['icpRMSE'] = None
+        state['icpTranslation'] = None
+        state['icpRotation'] = None
     finally:
         state['busy'] = False
         state['thread'] = None
@@ -152,6 +217,15 @@ if not state.get('busy', False):
         state['response'] = None
         state['details'] = None
         state['previewPath'] = None
+        state['preICPPreviewPath'] = None
+        state['postICPPreviewPath'] = None
+        state['icpEnabled'] = False
+        state['icpAcceptedCount'] = 0
+        state['icpRejectedCount'] = 0
+        state['icpFitness'] = None
+        state['icpRMSE'] = None
+        state['icpTranslation'] = None
+        state['icpRotation'] = None
         thread = threading.Thread(target=_worker, args=(state, globals().get('base_url', 'http://127.0.0.1:8765'), name, endpoint))
         thread.daemon = True
         state['thread'] = thread
@@ -170,3 +244,12 @@ response = state.get('response')
 details = state.get('details')
 previewPath = state.get('previewPath')
 captureCount = int(state.get('captureCount') or 0)
+preICPPreviewPath = state.get('preICPPreviewPath')
+postICPPreviewPath = state.get('postICPPreviewPath')
+icpEnabled = bool(state.get('icpEnabled', False))
+icpAcceptedCount = int(state.get('icpAcceptedCount') or 0)
+icpRejectedCount = int(state.get('icpRejectedCount') or 0)
+icpFitness = state.get('icpFitness')
+icpRMSE = state.get('icpRMSE')
+icpTranslation = state.get('icpTranslation')
+icpRotation = state.get('icpRotation')

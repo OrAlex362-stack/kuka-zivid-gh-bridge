@@ -87,8 +87,17 @@ scan:
       std_ratio: 2.0
     icp:
       enabled: false
+      method: point_to_plane
+      voxel_size_mm: 2.0
       max_correspondence_distance_mm: 5.0
       max_iterations: 50
+      normal_radius_mm: 8.0
+      normal_max_nn: 30
+      min_fitness: 0.30
+      max_inlier_rmse_mm: 3.0
+      max_translation_correction_mm: 5.0
+      max_rotation_correction_deg: 1.0
+      failure_policy: use_initial_alignment
   preview:
     max_points: 100000
 

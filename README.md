@@ -289,11 +289,14 @@ POST /scan/finish
 
 Each scan capture reuses the same safety and correctness gates as POST /capture: fresh pose, stationary robot, valid calibration, acquisition interval coverage, Base-frame transform, committed disk artifacts. The scan folder stores lightweight scan_capture.yaml records that reference the committed capture artifacts under data/captures/ instead of duplicating large original ZDF/NPZ files.
 
-Merge uses Open3D to combine Base-frame PLY files. Optional voxel downsampling and statistical outlier removal are configured under scan.merge. ICP options are reserved in configuration, but robot/hand-eye alignment is the current merge basis.
+Merge uses Open3D to combine Base-frame PLY files. Robot UDP `T_base_flange` plus Eye-in-Hand `T_flange_camera` remains the authoritative initial alignment, and each `base_ply` is already in Robot Base frame before scan merge. When enabled, bounded Point-to-Plane ICP starts from identity and applies only a small accepted `Delta T` correction to the original full-resolution source cloud before final voxel downsampling and statistical outlier removal.
+
+ICP is a registration-consistency refinement for multi-view overlap. It does not improve Zivid depth accuracy, replace hand-eye calibration, or prove physical frame correctness.
 
 Scan outputs include:
 
 - merged_cloud_raw.ply
+- merged_cloud_pre_icp.ply when ICP is enabled
 - merged_cloud_downsampled.ply
 - merged_preview.xyz
 - merged_preview.xyzrgb when color is available
